@@ -10,6 +10,7 @@ import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-c
 import { LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
+import { loadRecording, Recorder, type Recording, replay } from './recording.js';
 import { freeze } from './page/freeze.js';
 import { snapshot } from './page/snapshot.js';
 import type { Config, Manifest, MockAnswer, PageTree, Step } from './types.js';
@@ -103,6 +104,10 @@ export interface OpenOptions {
     now?: string;
     /** MSW handlers answering what `mocks` does not. */
     msw?: { source: MswSource; handlers: unknown[] };
+    /** Recorded answers, after `mocks` and MSW. */
+    recording?: Recording;
+    /** Records the page's API answers (record_data). */
+    recorder?: Recorder;
 }
 
 /** Waits until the page's address has stayed the same for a second (an app that sends itself on after loading), up to `max` ms. */
@@ -136,7 +141,7 @@ export async function evaluateSettled<R, A>(page: Page, fn: (arg: A) => R | Prom
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState });
     const page = await context.newPage();
     if (now) {
@@ -148,14 +153,18 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
     const table = Object.entries(mocks).map(([p, answer]) => [matcher(p), answer] as const);
-    if (table.length || msw) {
+    // The page's data, from the first source that has an answer: config mocks, MSW, a recording; else the network.
+    if (table.length || msw || recording) {
         await page.route('**/*', async route => {
             const hit = table.find(([test]) => test(route.request()));
             if (hit) return fulfill(route, hit[1]);
             const answer = msw && (await mswAnswer(msw.source, msw.handlers, route.request()));
-            return answer ? route.fulfill(answer) : route.fallback();
+            if (answer) return route.fulfill(answer);
+            const recorded = recording?.lookup(route.request());
+            return recorded ? route.fulfill(replay(recorded)) : route.fallback();
         });
     }
+    recorder?.watch(page);
     try {
         // Shown first; then load and idle as far as they come (a dev server's page may keep a request
         // hanging, so neither is required).
@@ -214,7 +223,9 @@ export async function captureStates({ config, base, out, only, root = process.cw
     // Logged in to this app before (log_in): every state opens logged in.
     const storageState = storedAuth(root, baseURL);
     // The project's MSW handlers, loaded once (relative to the config file).
-    const mswSource = config.msw ? await loadMsw(config.msw, config.file && path.isAbsolute(config.file) ? path.dirname(config.file) : root) : undefined;
+    const configDir = config.file && path.isAbsolute(config.file) ? path.dirname(config.file) : root;
+    const mswSource = config.msw ? await loadMsw(config.msw, configDir) : undefined;
+    const recording = config.recording ? loadRecording(path.resolve(configDir, config.recording)) : undefined;
     const names = only?.length ? only : Object.keys(config.states);
     for (const n of names) if (!config.states[n]) throw new Error(`No state "${n}"; the config has ${Object.keys(config.states).join(', ')}`);
     fs.mkdirSync(out, { recursive: true });
@@ -235,6 +246,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                     storageState,
                     now: config.now,
                     msw: mswSource && { source: mswSource, handlers: handlersFor(mswSource, state.msw) },
+                    recording,
                     locale: config.locale,
                     timezone: config.timezone,
                 });
@@ -289,4 +301,48 @@ export async function captureStates({ config, base, out, only, root = process.cw
     }
     fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
     return results;
+}
+
+/**
+ * Records the app's API answers from a real backend: opens each state at `base` (logged in, steps
+ * done) with no mocks at all, and writes what the page fetched to the HAR `file` (adding to it).
+ * Point the config's `recording` at it and later captures answer from it.
+ */
+export async function recordData({ config, base, file, only, root = process.cwd(), log = console.log }: { config: Config; base?: string; file: string; only?: string[]; root?: string; log?: (line: string) => void }): Promise<{ results: CaptureResult[]; answers: number }> {
+    const baseURL = base ?? config.baseURL;
+    if (!baseURL) throw new Error('No base URL: pass --base <url> or set baseURL in the config');
+    const names = only?.length ? only : Object.keys(config.states);
+    for (const n of names) if (!config.states[n]) throw new Error(`No state "${n}"; the config has ${Object.keys(config.states).join(', ')}`);
+    const storageState = storedAuth(root, baseURL);
+    const recorder = new Recorder();
+    const browser = await launch();
+    const results: CaptureResult[] = [];
+    try {
+        for (const name of names) {
+            const state = config.states[name];
+            try {
+                const { context, errors } = await openState(browser, {
+                    url: new URL(state.path ?? '/', baseURL).href,
+                    steps: state.steps,
+                    viewport: state.viewport ?? config.viewport,
+                    settle: state.settle ?? config.settle,
+                    stepTimeout: state.stepTimeout ?? config.stepTimeout,
+                    storageState,
+                    now: config.now,
+                    recorder,
+                });
+                await recorder.flush();
+                await context.close();
+                results.push({ name, ok: true, errors, fidelity: null });
+                log(`ok   ${name}`);
+            } catch (error) {
+                const message = (error as Error).message.split('\n')[0];
+                results.push({ name, ok: false, error: message, errors: [], fidelity: null });
+                log(`FAIL ${name}: ${message}`);
+            }
+        }
+    } finally {
+        await browser.close();
+    }
+    return { results, answers: await recorder.save(file) };
 }

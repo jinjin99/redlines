@@ -6,7 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { logIn, storedAuth } from './auth.js';
-import { captureStates, loadConfig, viewPage } from './capture.js';
+import { captureStates, loadConfig, recordData, viewPage } from './capture.js';
 import { formatChanges } from './diff.js';
 import { exportDesign } from './export.js';
 import { outline } from './outline.js';
@@ -34,6 +34,7 @@ Use it whenever you change UI code:
 1. See your work. After changing a page, call view_page on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use steps to reach dialogs, menus and filled-in forms, and mocks for data states (an empty list, an error).
 2. Show the change to people (designers, PMs, reviewers):
    - list_states tells you which states the project lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
+   - Both versions must show the same data. If the project has MSW handlers, set msw in the config; if the app needs a real backend, call record_data once against it (logged in) and set recording in the config to the file it writes. Otherwise write mocks for the endpoints the states use.
    - You need the app running twice: before the change (usually the main branch: a second checkout, e.g. git worktree add, with its own dev server on another port) and after it (your working copy). If you don't know how to run the app, ask the user for the two URLs.
    - capture_states with the before URL into one folder and with the after URL into another (same config), then find_changes between them. Check the list matches what you meant to change: anything you did not intend is worth telling the user about.
    - create_review writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
@@ -145,6 +146,25 @@ export const TOOLS: Tool[] = [
             const results = await captureStates({ config, base, out: dir, only: states, root, log: log ?? (() => {}) });
             const lines = results.map(r => (r.ok ? `ok   ${r.name}${r.fidelity != null ? ` (html ${(r.fidelity * 100).toFixed(1)}% like the page)` : ''}${r.errors.length ? `; page errors: ${r.errors.join(' | ')}` : ''}` : `FAIL ${r.name}: ${r.error}`));
             return { text: `${path.relative(root, dir)}:\n${lines.join('\n')}`, isError: results.some(r => !r.ok) };
+        },
+    },
+    {
+        name: 'record_data',
+        title: 'Record the app\'s data',
+        description: 'Open each state at `base` against a real backend (logged in, no mocks) and record the API answers the pages fetch (fetch and XHR only, never scripts or styles; no request headers kept) into a HAR file. Set `recording` in the config to that file and capture_states answers from it, so the versions before and after a change show the same data. The file holds real backend data: keep it out of public repositories.',
+        input: {
+            base: httpUrl.describe('Where the app runs against a real backend, e.g. http://localhost:3000'),
+            out: z.string().optional().describe('The HAR file in the project (default .redlines/recording.har); answers already in it are kept'),
+            states: z.array(z.string()).optional().describe('Only these states (default: all).'),
+            config: z.string().optional().describe('A config file in the project, if not the default name.'),
+        },
+        annotations: { openWorldHint: true },
+        async run({ base, out, states, config: file }, { root, log }) {
+            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
+            const har = inProject(root, out, '.redlines/recording.har');
+            const { results, answers } = await recordData({ config, base, file: har, only: states, root, log: log ?? (() => {}) });
+            const lines = results.map(r => (r.ok ? `ok   ${r.name}` : `FAIL ${r.name}: ${r.error}`));
+            return { text: `${lines.join('\n')}\n${answers} answers recorded into ${path.relative(root, har)}. Set recording: '${path.relative(path.dirname(config.file), har)}' in the config to capture from it.`, isError: results.some(r => !r.ok) };
         },
     },
     {

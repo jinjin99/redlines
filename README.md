@@ -60,6 +60,7 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 
 | Tool | What it does |
 | --- | --- |
+| `record_data --base <url> [--out <file>] [--states <names>]` | Records the API answers each state fetches from a real backend into a HAR file, to replay on later captures. See [Mock data](#mock-data). |
 | `log_in --url <url> [--until <selector>] [--timeoutMinutes <n>]` | For an app behind a login: opens a browser window on the app for **you** to log in, waits until you have, and keeps the login for that app. See [Apps behind a login](#apps-behind-a-login). |
 | `view_page --url <url> [--steps <json>] [--mocks <json>] [--width] [--height] [--fullPage]` | Opens a page of the running app (doing the steps first) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing (on the command line, the screenshot goes to `.redlines/view_page.png`). |
 | `list_states [--config <file>]` | The states the project's config lists, or how to write the config. |
@@ -72,7 +73,7 @@ Every path a tool reads or writes is inside the project folder (the current dire
 
 ## Mock data
 
-The same data on both versions is what makes a comparison mean anything, so redlines answers the page's requests itself, without touching the app: no code in it, no service worker, nothing to start. Requests nothing answers go to the network as usual. Three sources, tried in this order:
+The same data on both versions is what makes a comparison mean anything, so redlines answers the page's requests itself, without touching the app: no code in it, no service worker, nothing to start. Requests nothing answers go to the network as usual. Three sources, tried in this order (the first with an answer wins):
 
 1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data.
 2. **Your MSW handlers**: if the project already mocks with [MSW](https://mswjs.io) (2.4 or later), point at the module:
@@ -86,13 +87,27 @@ The same data on both versions is what makes a comparison mean anything, so redl
    ```
 
    The path is relative to the config file, so the handlers can live outside the app's repository. Handlers in TypeScript load on Node 22.18 or later; on Node 20, point at compiled JavaScript.
+3. **A recording**: for an app with a real backend and too many endpoints to mock, record what it fetches once, then replay it:
+
+   ```bash
+   npx redlines log_in --url http://localhost:3000            # if the app needs it
+   npx redlines record_data --base http://localhost:3000      # writes .redlines/recording.har
+   ```
+
+   ```js
+   recording: '.redlines/recording.har',
+   ```
+
+   `record_data` opens every state against the real backend, with no mocks, and keeps the API answers the pages fetch: fetch and XHR only, never scripts or styles (those must come from the version being captured), no request headers, and of the response only its body and content type. Recording again adds to the file. Replay matches a request by method, path and query (any host, so a different dev server port works) and body, falling back to method and path. The file is the backend's real data: keep it out of public repositories.
+
+All three answer requests the **browser** makes. An app that renders on the server (Next.js, Remix, TanStack Start, an SSR dev server) fetches its first screen's data on the server, where they can't reach: the data is already in the HTML the browser gets, and only what the page fetches afterwards (paging, filtering, a dialog's data) goes through them. For such an app, capture both versions against the same backend close together in time, with `now` set, or mock on the server side.
 
 ### What a project provides
 
 redlines needs nothing in the app's code. A project, or a separate repository next to it, provides:
 
 - a `redlines.config.mjs`: the states to capture, and where their data comes from;
-- the data: inline `mocks`, an MSW handlers module, or both.
+- the data: inline `mocks`, an MSW handlers module, a recording, or any mix of them.
 
 `list_states` (and its MCP tool) reads the config back, so an agent setting up a new project sees what is there and what is missing.
 

@@ -93,6 +93,8 @@ export interface Config {
     mocks?: Record<string, MockAnswer>;
     /** A project's MSW handlers answering requests not in `mocks`: the module (relative to the config), or { file, export }. */
     msw?: import('./msw.js').MswConfig;
+    /** A recording (record_data) answering what `mocks` and MSW do not: a HAR file, relative to the config. */
+    recording?: string;
     states: Record<string, StateConfig>;
     settle?: number;
     stepTimeout?: number;
