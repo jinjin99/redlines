@@ -21,7 +21,7 @@ export async function freeze(): Promise<string> {
             const text = owner.textContent ?? '';
             // Rules inserted by script leave the element's text short of them.
             let rules = 0;
-            try { rules = sheet.cssRules.length; } catch {}
+            try { rules = sheet.cssRules.length; } catch { /* unreadable: taken as no rules */ }
             if (text.trim() && (rules === 0 || (text.match(/\{/g) ?? []).length >= rules)) return fixUrls(text, document.baseURI);
             return null;
         }
@@ -29,7 +29,7 @@ export async function freeze(): Promise<string> {
             try {
                 const res = await fetch(sheet.href);
                 if (res.ok) return fixUrls(await res.text(), sheet.href);
-            } catch {}
+            } catch { /* not fetched: the rules or a link stand in */ }
         }
         return null;
     };
@@ -49,7 +49,7 @@ export async function freeze(): Promise<string> {
             const blob = await (await fetch(src)).blob();
             if (blob.size > 2e6) return;
             inline.set(src, await new Promise<string>(r => { const f = new FileReader(); f.onload = () => r(String(f.result)); f.readAsDataURL(blob); }));
-        } catch {}
+        } catch { /* not inlined: the image keeps its URL */ }
     }));
 
     const clone = document.body.cloneNode(true) as HTMLElement;
@@ -72,7 +72,7 @@ export async function freeze(): Promise<string> {
             img.src = canvases[i].toDataURL();
             for (const a of ['class', 'style', 'width', 'height']) { const v = c.getAttribute(a); if (v !== null) img.setAttribute(a, v); }
             c.replaceWith(img);
-        } catch {}
+        } catch { /* a canvas drawn from another origin can't be read: it stays a canvas */ }
     });
     clone.querySelectorAll('script, noscript, template, iframe').forEach(n => n.remove());
     clone.querySelectorAll('*').forEach(n => {

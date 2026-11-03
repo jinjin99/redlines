@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
+import { logIn, storedAuth } from './auth.js';
 import { captureStates, loadConfig, viewPage } from './capture.js';
 import { formatChanges } from './diff.js';
 import { exportDesign } from './export.js';
@@ -29,6 +30,7 @@ export interface Tool {
 export const INSTRUCTIONS = `redlines shows what a UI change does to the pages, state by state.
 
 Use it whenever you change UI code:
+0. Apps behind a login: when a tool says the app sent a page to a login page, call log_in with the app's URL and tell the user to log in in the browser window that opens (they type their own password; you never ask for it). The login is kept for that app (each port separately, so the before and after versions each need one).
 1. See your work. After changing a page, call view_page on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use steps to reach dialogs, menus and filled-in forms, and mocks for data states (an empty list, an error).
 2. Show the change to people (designers, PMs, reviewers):
    - list_states tells you which states the project lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
@@ -48,7 +50,7 @@ export function inProject(root: string, p?: string, fallback?: string): string {
 
 const step = z.union([
     z.object({ click: z.string() }),
-    z.object({ fill: z.tuple([z.string(), z.string()]) }),
+    z.object({ fill: z.tuple([z.string(), z.union([z.string(), z.object({ env: z.string() })])]) }),
     z.object({ press: z.string() }),
     z.object({ hover: z.string() }),
     z.object({ select: z.tuple([z.string(), z.string()]) }),
@@ -74,6 +76,21 @@ const CONFIG_EXAMPLE = `export default {
  */
 export const TOOLS: Tool[] = [
     {
+        name: 'log_in',
+        title: 'Log in to the app',
+        description: 'For an app behind a login: open a browser window on the app for the user to log in themselves, wait until they have, and keep the login (cookies, local storage) for later view_page and capture_states of the same app. Tell the user to log in in the window that opens; never ask for their password.',
+        input: {
+            url: httpUrl.describe('The app, e.g. http://localhost:3000 (it may send the window on to its login page)'),
+            until: z.string().optional().describe('A selector that shows only once logged in, when coming back to the app is not enough to tell.'),
+            timeoutMinutes: z.number().int().min(1).max(30).optional(),
+        },
+        annotations: { openWorldHint: true },
+        async run({ url, until, timeoutMinutes }, { root }) {
+            const file = await logIn({ root, url, until, timeoutMinutes });
+            return { text: `Logged in to ${new URL(url).origin}. The login is kept in ${path.relative(root, file)} (out of git, readable only by you) and used by view_page and capture_states for this app.` };
+        },
+    },
+    {
         name: 'view_page',
         title: 'View a page',
         description: 'Open a page of the running app (optionally doing steps first: click, fill, press, hover, select, waitFor, wait) and return a screenshot, an outline of what is on screen (components, buttons, links, text) and any page errors. Writes nothing.',
@@ -86,8 +103,8 @@ export const TOOLS: Tool[] = [
             fullPage: z.boolean().optional().describe('Screenshot the whole page instead of the first screen.'),
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
-        async run({ url, steps, mocks, width, height, fullPage }) {
-            const { tree, screenshot, errors } = await viewPage({ url, steps, mocks, viewport: { width: width ?? 1280, height: height ?? 800 }, fullPage });
+        async run({ url, steps, mocks, width, height, fullPage }, { root }) {
+            const { tree, screenshot, errors } = await viewPage({ url, steps, mocks, viewport: { width: width ?? 1280, height: height ?? 800 }, fullPage, storageState: storedAuth(root, url) });
             return { image: screenshot, text: `${tree.title || '(no title)'} — ${tree.url}\npage size ${tree.size.width}×${tree.size.height}${errors.length ? `\npage errors:\n  ${errors.join('\n  ')}` : ''}\n\n${outline(tree)}` };
         },
     },
@@ -123,7 +140,7 @@ export const TOOLS: Tool[] = [
         async run({ base, out, states, config: file }, { root, log }) {
             const config = await loadConfig(file ? inProject(root, file) : undefined, root);
             const dir = inProject(root, out);
-            const results = await captureStates({ config, base, out: dir, only: states, log: log ?? (() => {}) });
+            const results = await captureStates({ config, base, out: dir, only: states, root, log: log ?? (() => {}) });
             const lines = results.map(r => (r.ok ? `ok   ${r.name}${r.fidelity != null ? ` (html ${(r.fidelity * 100).toFixed(1)}% like the page)` : ''}${r.errors.length ? `; page errors: ${r.errors.join(' | ')}` : ''}` : `FAIL ${r.name}: ${r.error}`));
             return { text: `${path.relative(root, dir)}:\n${lines.join('\n')}`, isError: results.some(r => !r.ok) };
         },

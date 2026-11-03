@@ -25,7 +25,7 @@ const textOf = (r: unknown) => contentOf(r).filter(c => c.type === 'text').map(c
 test('mcp: the tools and how to use them', async () => {
     const client = await connect(FIXTURES);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(t => t.name).sort(), ['capture_states', 'create_review', 'export_design', 'find_changes', 'list_states', 'view_page']);
+    assert.deepEqual(tools.map(t => t.name).sort(), ['capture_states', 'create_review', 'export_design', 'find_changes', 'list_states', 'log_in', 'view_page']);
     assert.match(client.getInstructions() ?? '', /call view_page on it/);
 });
 

@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-core';
 
+import { LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { freeze } from './page/freeze.js';
 import { snapshot } from './page/snapshot.js';
@@ -43,7 +44,16 @@ async function fulfill(route: Route, answer: MockAnswer) {
 async function step(page: Page, s: Step): Promise<unknown> {
     if (typeof s === 'function') return s(page);
     if ('click' in s) return page.locator(s.click).first().click();
-    if ('fill' in s) return page.locator(s.fill[0]).first().fill(String(s.fill[1]));
+    if ('fill' in s) {
+        const [selector, value] = s.fill;
+        // { env: NAME }: a value kept out of the config (a test account's password in CI).
+        if (typeof value === 'object') {
+            const secret = process.env[value.env];
+            if (secret === undefined) throw new Error(`the environment variable ${value.env} is not set`);
+            return page.locator(selector).first().fill(secret);
+        }
+        return page.locator(selector).first().fill(String(value));
+    }
     if ('press' in s) return page.keyboard.press(s.press);
     if ('hover' in s) return page.locator(s.hover).first().hover();
     if ('select' in s) return page.locator(s.select[0]).first().selectOption(s.select[1]);
@@ -86,13 +96,15 @@ export interface OpenOptions {
     stepTimeout?: number;
     locale?: string;
     timezone?: string;
+    /** A login state (log_in) to open the page with. */
+    storageState?: string;
 }
 
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC' }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
-    const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone });
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState });
     const page = await context.newPage();
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
@@ -105,6 +117,11 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
     }
     try {
         await page.goto(url, { waitUntil: 'load' });
+        // Sent to a login page instead: say so, rather than record the login page as the state.
+        const asked = new URL(url), landed = new URL(page.url());
+        if (LOGIN.test(landed.pathname + landed.hash) && !LOGIN.test(asked.pathname + asked.hash) || (landed.origin !== asked.origin && LOGIN.test(landed.href))) {
+            throw new Error(`the app sent ${asked.pathname} to a login page (${landed.origin}${landed.pathname}): log in first (log_in --url ${asked.origin})${storageState ? ', the login kept before has expired' : ''}`);
+        }
         await page.addStyleTag({ content: STILL });
         page.setDefaultTimeout(stepTimeout);
         for (const [i, s] of steps.entries()) {
@@ -112,7 +129,7 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
                 await step(page, s);
             } catch (error) {
                 const why = (error as Error).message.split('\n')[0].replace(/^\w+\.\w+: /, '');
-                throw new Error(`step ${i + 1} of ${steps.length}, ${stepText(s)}: ${/Timeout/.test(why) ? `nothing on the page matched within ${stepTimeout} ms` : why}`);
+                throw new Error(`step ${i + 1} of ${steps.length}, ${stepText(s)}: ${/Timeout/.test(why) ? `nothing on the page matched within ${stepTimeout} ms` : why}`, { cause: error });
             }
         }
         // Steps are quick to give up; recording a big page is not hurried.
@@ -128,10 +145,10 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
 }
 
 /** One page as it is now: { tree, screenshot (PNG buffer), errors }, without writing anything. */
-export async function viewPage({ url, steps, mocks, viewport, settle, fullPage = false }: OpenOptions & { fullPage?: boolean }): Promise<{ tree: PageTree; screenshot: Buffer; errors: string[] }> {
+export async function viewPage({ url, steps, mocks, viewport, settle, storageState, fullPage = false }: OpenOptions & { fullPage?: boolean }): Promise<{ tree: PageTree; screenshot: Buffer; errors: string[] }> {
     const browser = await launch();
     try {
-        const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle });
+        const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle, storageState });
         try {
             const tree = await page.evaluate(snapshot, {});
             return { tree, screenshot: await page.screenshot({ fullPage }), errors };
@@ -146,9 +163,11 @@ export async function viewPage({ url, steps, mocks, viewport, settle, fullPage =
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
 export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null }
 
-export async function captureStates({ config, base, out, only, log = console.log }: { config: Config; base?: string; out: string; only?: string[]; log?: (line: string) => void }): Promise<CaptureResult[]> {
+export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void }): Promise<CaptureResult[]> {
     const baseURL = base ?? config.baseURL;
     if (!baseURL) throw new Error('No base URL: pass --base <url> or set baseURL in the config');
+    // Logged in to this app before (log_in): every state opens logged in.
+    const storageState = storedAuth(root, baseURL);
     const names = only?.length ? only : Object.keys(config.states);
     for (const n of names) if (!config.states[n]) throw new Error(`No state "${n}"; the config has ${Object.keys(config.states).join(', ')}`);
     fs.mkdirSync(out, { recursive: true });
@@ -166,6 +185,7 @@ export async function captureStates({ config, base, out, only, log = console.log
                     viewport: state.viewport ?? config.viewport,
                     settle: state.settle ?? config.settle,
                     stepTimeout: state.stepTimeout ?? config.stepTimeout,
+                    storageState,
                     locale: config.locale,
                     timezone: config.timezone,
                 });

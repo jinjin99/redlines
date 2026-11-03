@@ -62,7 +62,7 @@ export interface Change {
 
 export type Step =
     | { click: string }
-    | { fill: [string, string] }
+    | { fill: [string, string | { env: string }] }
     | { press: string }
     | { hover: string }
     | { select: [string, string] }

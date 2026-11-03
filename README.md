@@ -60,6 +60,7 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 
 | Tool | What it does |
 | --- | --- |
+| `log_in --url <url> [--until <selector>] [--timeoutMinutes <n>]` | For an app behind a login: opens a browser window on the app for **you** to log in, waits until you have, and keeps the login for that app. See [Apps behind a login](#apps-behind-a-login). |
 | `view_page --url <url> [--steps <json>] [--mocks <json>] [--width] [--height] [--fullPage]` | Opens a page of the running app (doing the steps first) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing (on the command line, the screenshot goes to `.redlines/view_page.png`). |
 | `list_states [--config <file>]` | The states the project's config lists, or how to write the config. |
 | `capture_states --base <url> --out <dir> [--states <names>] [--config <file>]` | Opens each state at `base`, does its steps, waits for it to settle, and writes `<state>.json` (the page tree), `<state>.png` (a full-page screenshot) and `<state>.html` (the page frozen as standalone HTML) into `out`, with a `manifest.json`. |
@@ -68,6 +69,24 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 | `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. |
 
 Every path a tool reads or writes is inside the project folder (the current directory, or `REDLINES_ROOT`).
+
+## Apps behind a login
+
+redlines never asks for a password. You log in yourself, once per app:
+
+```bash
+npx redlines log_in --url http://localhost:3000
+```
+
+A browser window opens on the app; log in as you always do. Once the window is back on the app (or `--until <selector>` shows), the browser's login state (cookies, local storage) is saved to `.redlines/auth/<host>.json` and the window closes. From then on `view_page` and `capture_states` open that app logged in. The file is a credential: it is readable only by you, and its folder carries its own `.gitignore`. Each host and port is separate, so the version before the change and the one after it each need a login. When it expires, a capture says the app sent the page to its login page; log in again.
+
+In CI, where nobody can type, log in with steps and take the secret from the environment, never the config:
+
+```js
+login: { path: '/login', steps: [{ fill: ['#email', { env: 'APP_USER' }] }, { fill: ['#password', { env: 'APP_PASSWORD' }] }, { click: 'text=Log in' }] }
+```
+
+Error messages name the variable, never its value. For apps that decide in the browser whether you are logged in (they ask an API who you are), a mock of that API is often enough: `mocks: { 'GET /api/me': { id: 'u1', name: 'Designer' } }`.
 
 ## For coding agents (MCP)
 
@@ -86,13 +105,14 @@ Run it from the project folder.
 | `baseURL` | Where the app runs. `--base` overrides it, so one config shoots both versions. |
 | `viewport` | `{ width, height }`, default 1280 × 800. A state can set its own. |
 | `states` | `{ <name>: { path, title, steps, mocks, viewport, settle, ignore } }`. Names are letters, digits, `-` and `_`. |
-| `steps` | Done in order after the page loads: `{ click: <selector> }`, `{ fill: [<selector>, <text>] }`, `{ press: <key> }`, `{ hover: <selector> }`, `{ select: [<selector>, <value>] }`, `{ waitFor: <selector> }`, `{ wait: <ms> }`, or a function `async page => …` (Playwright's page). Selectors are [Playwright selectors](https://playwright.dev/docs/locators): `text=Save`, `role=button[name="Save"]`, CSS. |
+| `steps` | Done in order after the page loads: `{ click: <selector> }`, `{ fill: [<selector>, <text> or { env: <variable> }] }`, `{ press: <key> }`, `{ hover: <selector> }`, `{ select: [<selector>, <value>] }`, `{ waitFor: <selector> }`, `{ wait: <ms> }`, or a function `async page => …` (Playwright's page). Selectors are [Playwright selectors](https://playwright.dev/docs/locators): `text=Save`, `role=button[name="Save"]`, CSS. |
 | `mocks` | `{ "<METHOD> <path>": <answer> }`, for every state, and per state on top. The path is matched from the start, `*` matches anything. An answer is JSON data, `{ status, json \| body, headers }`, or a function of the request. Requests not listed go to the network. |
 | `ignore` | A CSS selector for parts of the page to leave out (a clock, an ad slot). |
 | `settle` | Milliseconds to wait after the page is idle, default 300. |
+| `stepTimeout` | How long a step waits for what it acts on, default 5000 ms. A step that finds nothing fails the state with which step and why. |
 | `locale`, `timezone` | Default `en-US` and `UTC`, so dates read the same on every machine. |
 
-Animations and transitions are turned off and the caret hidden while shooting, so two shots of the same page are the same.
+Animations and transitions are turned off and the caret hidden while capturing, so two shots of the same page are the same.
 
 ## What it records
 
@@ -143,10 +163,11 @@ Early. What works today: shooting states of any web app with Playwright, mocked 
 
 ## Developing
 
-redlines is written in TypeScript (`src/`, `bin/`), built with `tsc` into `dist/`.
+redlines is written in TypeScript (`src/`, `bin/`), built with `tsc` into `dist/`, and needs Node 20 or later. CI lints, builds and tests it on Node 20, 22 and 24 on Linux, and on macOS and Windows.
 
 ```bash
 npm install
+npm run lint    # ESLint
 npm test        # builds, then runs the tests (they drive a real Chromium)
 npm run demo    # the example app, captured before and after, into .redlines/demo/
 ```

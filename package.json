@@ -20,12 +20,13 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test dist/test/*.test.js",
+    "lint": "eslint .",
+    "test": "tsc && node scripts/test.mjs",
     "demo": "tsc && node dist/scripts/demo.js",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run lint && npm test"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -42,10 +43,13 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "20.19.43",
+    "eslint": "10.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
   },
   "types": "dist/src/index.d.ts"
 }
