@@ -50,7 +50,8 @@
     "lint": "eslint .",
     "test": "tsc && node scripts/test.mjs",
     "demo": "tsc && node dist/scripts/demo.js",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run lint && npm test",
+    "prepare": "tsc"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

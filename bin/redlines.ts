@@ -27,7 +27,7 @@ function help() {
         });
         lines.push(`  ${t.name} ${inputs.join(' ')}`, `      ${t.description}`, '');
     }
-    lines.push('  mcp', '      Serve these tools over stdio for coding agents: claude mcp add redlines -- npx redlines mcp');
+    lines.push('  mcp', '      Serve these tools over stdio for coding agents: claude mcp add redlines -- npx -y github:jinjin99/redlines mcp');
     return lines.join('\n');
 }
 
