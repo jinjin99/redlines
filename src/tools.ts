@@ -78,7 +78,7 @@ export const TOOLS: Tool[] = [
     {
         name: 'log_in',
         title: 'Log in to the app',
-        description: 'For an app behind a login: open a browser window on the app for the user to log in themselves, wait until they have, and keep the login (cookies, local storage) for later view_page and capture_states of the same app. Tell the user to log in in the window that opens; never ask for their password.',
+        description: 'For an app behind a login: open a browser window on the app for the user to log in themselves, wait until they have, and keep the login (cookies, local storage) for later view_page and capture_states of the same app. Tell the user to log in in the window that opens, and that if it does not close by itself once they are in, to press the "Logged in — save for redlines" button at the bottom right. Never ask for their password.',
         input: {
             url: httpUrl.describe('The app, e.g. http://localhost:3000 (it may send the window on to its login page)'),
             until: z.string().optional().describe('A selector that shows only once logged in, when coming back to the app is not enough to tell.'),

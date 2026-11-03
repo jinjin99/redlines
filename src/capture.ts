@@ -98,14 +98,50 @@ export interface OpenOptions {
     timezone?: string;
     /** A login state (log_in) to open the page with. */
     storageState?: string;
+    /** The time the page sees as now. */
+    now?: string;
+}
+
+/** Waits until the page's address has stayed the same for a second (an app that sends itself on after loading), up to `max` ms. */
+async function addressSettled(page: Page, max = 15_000) {
+    const end = Date.now() + max;
+    let last = page.url(), since = Date.now();
+    while (Date.now() < end) {
+        await page.waitForTimeout(250);
+        if (page.url() !== last) { last = page.url(); since = Date.now(); continue; }
+        if (Date.now() - since >= 1000) return;
+    }
+}
+
+/**
+ * page.evaluate that survives the page navigating under it (an app redirecting itself as it starts):
+ * waits for the new page to load and settle, and tries again, up to three times.
+ */
+export async function evaluateSettled<R, A>(page: Page, fn: (arg: A) => R | Promise<R>, arg: A): Promise<R> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return (await page.evaluate(fn as (arg: unknown) => R | Promise<R>, arg as unknown)) as R;
+        } catch (error) {
+            if (attempt >= 3 || !/Execution context was destroyed|navigat/i.test((error as Error).message)) throw error;
+            await page.waitForLoadState('load', { timeout: 15_000 }).catch(() => {});
+            await addressSettled(page);
+            await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+        }
+    }
 }
 
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState });
     const page = await context.newPage();
+    if (now) {
+        const at = new Date(now);
+        if (Number.isNaN(at.getTime())) throw new Error(`now is not a date: ${now}`);
+        // The clock stands still at `now`: timers still run, Date always says the same.
+        await page.clock.setFixedTime(at);
+    }
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
     const table = Object.entries(mocks).map(([p, answer]) => [matcher(p), answer] as const);
@@ -116,7 +152,10 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
         });
     }
     try {
-        await page.goto(url, { waitUntil: 'load' });
+        // Shown first; then load and idle as far as they come (a dev server's page may keep a request
+        // hanging, so neither is required).
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await page.waitForLoadState('load', { timeout: 15_000 }).catch(() => {});
         // Sent to a login page instead: say so, rather than record the login page as the state.
         const asked = new URL(url), landed = new URL(page.url());
         if (LOGIN.test(landed.pathname + landed.hash) && !LOGIN.test(asked.pathname + asked.hash) || (landed.origin !== asked.origin && LOGIN.test(landed.href))) {
@@ -134,8 +173,9 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
         }
         // Steps are quick to give up; recording a big page is not hurried.
         page.setDefaultTimeout(30000);
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await page.evaluate(() => document.fonts?.ready);
+        await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+        await page.evaluate(() => document.fonts?.ready).catch(() => {});
+        await addressSettled(page);
         await page.waitForTimeout(settle);
     } catch (error) {
         await context.close();
@@ -150,7 +190,7 @@ export async function viewPage({ url, steps, mocks, viewport, settle, storageSta
     try {
         const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle, storageState });
         try {
-            const tree = await page.evaluate(snapshot, {});
+            const tree = await evaluateSettled(page, snapshot, {});
             return { tree, screenshot: await page.screenshot({ fullPage }), errors };
         } finally {
             await context.close();
@@ -186,6 +226,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                     settle: state.settle ?? config.settle,
                     stepTimeout: state.stepTimeout ?? config.stepTimeout,
                     storageState,
+                    now: config.now,
                     locale: config.locale,
                     timezone: config.timezone,
                 });
@@ -197,14 +238,14 @@ export async function captureStates({ config, base, out, only, root = process.cw
             }
             const { context, page, errors } = opened;
             try {
-                const tree = await page.evaluate(snapshot, { ignore: state.ignore ?? config.ignore ?? null });
+                const tree = await evaluateSettled(page, snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
                 const shot = await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
                 // The page as one editable HTML file, checked against the screenshot: opened again, how much differs.
                 let fidelity: number | null = null;
                 if (config.html !== false) {
-                    const html = await page.evaluate(freeze);
+                    const html = await evaluateSettled(page, freeze, undefined);
                     fs.writeFileSync(path.join(out, `${name}.html`), html);
                     const check = await context.newPage();
                     try {

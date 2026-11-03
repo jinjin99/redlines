@@ -111,6 +111,7 @@ Run it from the project folder.
 | `settle` | Milliseconds to wait after the page is idle, default 300. |
 | `stepTimeout` | How long a step waits for what it acts on, default 5000 ms. A step that finds nothing fails the state with which step and why. |
 | `locale`, `timezone` | Default `en-US` and `UTC`, so dates read the same on every machine. |
+| `now` | The time pages see as now, e.g. `'2026-11-03T10:00:00Z'`. Pages that work dates out from today ("the last 30 days") then read the same whenever they are captured, so the version before a change, captured yesterday, and the one after it, captured today, don't differ only by the date. |
 
 Animations and transitions are turned off and the caret hidden while capturing, so two shots of the same page are the same.
 

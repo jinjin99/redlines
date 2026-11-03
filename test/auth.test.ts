@@ -39,6 +39,21 @@ test('log in once, then capture pages behind the login', async () => {
     }
 });
 
+test('log in by the button, for an app that never leaves its own pages', async () => {
+    const app = await loginApp('unused');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-button-'));
+    try {
+        // /login is the app's own page here: no redirect to watch for, so only the button can say it is done.
+        const file = await logIn({ root, url: `${app.base}/login`, headless: true, timeoutMinutes: 1, person: async page => {
+            await page.locator('#__redlines-done').click();
+        } });
+        assert.ok(fs.existsSync(file));
+    } finally {
+        app.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('a step can fill in a value from the environment, never shown', async () => {
     const app = await loginApp('from-env');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-env-'));

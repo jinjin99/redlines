@@ -144,3 +144,20 @@ test('export: a Claude Design canvas, one artboard per state', async () => {
     assert.match(board, /<x-dc>[\s\S]*<helmet>[\s\S]*<\/helmet>[\s\S]*Refund[\s\S]*<\/x-dc>/);
     assert.match(board, /class Component extends DCLogic/);
 });
+
+test('now: pages see the same time on every run', async () => {
+    const { serve } = await import('./helpers.js');
+    const os = await import('node:os');
+    const { captureStates } = await import('../src/capture.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-now-'));
+    fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><html><body><p id="d"></p><script>document.getElementById("d").textContent = "Today is " + new Date().toISOString().slice(0, 10);</script></body></html>');
+    const server = await serve(dir);
+    try {
+        const config: Config = { file: 'inline', now: '2030-01-02T03:04:05Z', states: { page: { path: '/index.html' } } };
+        await captureStates({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
+        assert.match(fs.readFileSync(path.join(dir, 'shots/page.json'), 'utf8'), /Today is 2030-01-02/);
+    } finally {
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

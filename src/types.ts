@@ -95,6 +95,8 @@ export interface Config {
     ignore?: string;
     locale?: string;
     timezone?: string;
+    /** The time pages see as now (ISO), so dates they work out ("the last 30 days") read the same on every run. */
+    now?: string;
     /** false: no standalone HTML per state. */
     html?: boolean;
     /** Where the config was read from. */
