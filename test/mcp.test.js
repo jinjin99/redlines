@@ -23,7 +23,7 @@ test('mcp: the tools and how to use them', async () => {
     const client = await connect(FIXTURES);
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map(t => t.name).sort(), ['capture_states', 'create_review', 'export_design', 'find_changes', 'list_states', 'view_page']);
-    assert.match(client.getInstructions(), /call `view_page` on it/);
+    assert.match(client.getInstructions(), /call view_page on it/);
 });
 
 test('mcp: look, config, shoot, compare, report, export', async () => {
@@ -44,8 +44,8 @@ test('mcp: look, config, shoot, compare, report, export', async () => {
             assert.ok(!shot.isError, textOf(shot));
         }
         assert.match(textOf(await client.callTool({ name: 'find_changes', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /column "Refund"/);
-        assert.match(textOf(await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /\.redlines\/report\/index\.html/);
-        assert.match(textOf(await client.callTool({ name: 'export_design', arguments: { shots: '.redlines/after' } })), /project\/list\.dc\.html/);
+        assert.match(textOf(await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /\.redlines\/review\/index\.html/);
+        assert.match(textOf(await client.callTool({ name: 'export_design', arguments: { from: '.redlines/after' } })), /project\/list\.dc\.html/);
 
         const outside = await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after', out: '../../elsewhere' } });
         assert.ok(outside.isError);
@@ -62,4 +62,17 @@ test('mcp: no config says how to write one', async () => {
         const client = await connect(root);
         assert.match(textOf(await client.callTool({ name: 'list_states', arguments: {} })), /Write redlines\.config\.mjs/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cli: the same tools, by the same names', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { TOOLS } = await import('../src/tools.js');
+    const bin = path.join(FIXTURES, '../../bin/redlines.js');
+    const helpText = execFileSync('node', [bin, 'help'], { encoding: 'utf8' });
+    for (const t of TOOLS) assert.match(helpText, new RegExp(`^  ${t.name} `, 'm'));
+    const listed = execFileSync('node', [bin, 'list_states'], { cwd: FIXTURES, encoding: 'utf8' });
+    assert.match(listed, /details: Order details dialog/);
+    // Inputs are checked as the MCP server checks them.
+    assert.throws(() => execFileSync('node', [bin, 'capture_states', '--base', 'not a url', '--out', 'x'], { cwd: FIXTURES, stdio: 'pipe' }), /--base: Invalid url/);
+    assert.throws(() => execFileSync('node', [bin, 'find_changes', '--nope', 'x'], { cwd: FIXTURES, stdio: 'pipe' }), /has no input --nope/);
 });

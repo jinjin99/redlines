@@ -42,47 +42,42 @@ export default {
 };
 ```
 
-Shoot the app before and after the change, then compare:
+Capture the app before and after the change, then compare:
 
 ```bash
-npx redlines shoot --base http://localhost:3000 --out .redlines/before   # on main
-npx redlines shoot --base http://localhost:3001 --out .redlines/after    # on your branch
-npx redlines diff .redlines/before .redlines/after
-npx redlines report .redlines/before .redlines/after --out .redlines/report
-open .redlines/report/index.html
+npx redlines capture_states --base http://localhost:3000 --out .redlines/before   # on main
+npx redlines capture_states --base http://localhost:3001 --out .redlines/after    # on your branch
+npx redlines find_changes --before .redlines/before --after .redlines/after
+npx redlines create_review --before .redlines/before --after .redlines/after
+open .redlines/review/index.html
 ```
 
-The report is a folder of static files: open it locally, or put it on any static host and link it from the PR.
+The review page is a folder of static files: open it locally, or put it on any static host and link it from the PR.
 
-## Commands
+## Tools
 
-| Command | What it does |
+The same six tools, by the same names and inputs, on the command line (`redlines <tool> --<input> <value>`) and over MCP. Arrays and objects are given as JSON on the command line (`--steps '[{"click":"text=Save"}]'`), a boolean as a bare flag (`--fullPage`). `redlines help` lists them with their inputs.
+
+| Tool | What it does |
 | --- | --- |
-| `redlines shoot --out <dir> [--base <url>] [--config <file>] [state…]` | Opens each state, does its steps, waits for the page to settle, and writes `<state>.json` (the page tree) and `<state>.png` (a full-page screenshot) into `<dir>`, with a `manifest.json`. Name states to shoot only those. |
-| `redlines diff <before> <after> [--json]` | The changes between two shot folders, state by state (or between two `.json` page trees). `--json` for tools and AI agents. |
-| `redlines report <before> <after> --out <dir> [--title <text>]` | The review page: `index.html`, the screenshots, and `changes.json`. |
-| `redlines export <shots> --out <dir> [--format html\|dc] [--title <text>]` | The states as editable design files. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. |
+| `view_page --url <url> [--steps <json>] [--mocks <json>] [--width] [--height] [--fullPage]` | Opens a page of the running app (doing the steps first) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing (on the command line, the screenshot goes to `.redlines/view_page.png`). |
+| `list_states [--config <file>]` | The states the project's config lists, or how to write the config. |
+| `capture_states --base <url> --out <dir> [--states <names>] [--config <file>]` | Opens each state at `base`, does its steps, waits for it to settle, and writes `<state>.json` (the page tree), `<state>.png` (a full-page screenshot) and `<state>.html` (the page frozen as standalone HTML) into `out`, with a `manifest.json`. |
+| `find_changes --before <dir> --after <dir> [--json]` | The changes between two captured folders, state by state. `--json` adds each change's boxes on the page. |
+| `create_review --before <dir> --after <dir> [--out <dir>] [--title <text>]` | The review page: `index.html`, the screenshots and `changes.json` (default `.redlines/review`). |
+| `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. |
+
+Every path a tool reads or writes is inside the project folder (the current directory, or `REDLINES_ROOT`).
 
 ## For coding agents (MCP)
 
-redlines is also an MCP server, so an agent that changes UI code can look at what it did and show people the change:
+`redlines mcp` serves the same tools over stdio, with instructions telling the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, capture the app before (main branch) and after (its working copy), find the changes, and hand over the review page.
 
 ```bash
 claude mcp add redlines -- npx redlines mcp     # Claude Code; other MCP clients: command "npx", args ["redlines", "mcp"]
 ```
 
-Run it from the project folder: every path the tools read or write stays inside it (`REDLINES_ROOT` sets another).
-
-| Tool | What it does |
-| --- | --- |
-| `view_page` | Opens a page of the running app (steps and mocks optional) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing. |
-| `list_states` | The project's states (`redlines.config.*`), or how to write the config. |
-| `capture_states` | One version of the app, every state, into a folder. |
-| `find_changes` | The changes between two captured folders. |
-| `create_review` | The review page for two captured folders. |
-| `export_design` | Editable design files of a captured folder (Claude Design canvas or HTML). |
-
-The server tells the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, shoot the app before (main branch) and after (its working copy), compare, and hand over the report.
+Run it from the project folder.
 
 ## Config
 
@@ -121,11 +116,11 @@ Animations and transitions are turned off and the caret hidden while shooting, s
 }
 ```
 
-`shoot` also freezes each state as `<state>.html`: the page as rendered, with every stylesheet it could read inlined, same-origin images as data URLs, and no scripts. It is opened again and compared with the screenshot pixel by pixel; the share that matches is `fidelity` in `manifest.json`. That file is what `export` builds on.
+`capture_states` also freezes each state as `<state>.html`: the page as rendered, with every stylesheet it could read inlined, same-origin images as data URLs, and no scripts. It is opened again and compared with the screenshot pixel by pixel; the share that matches is `fidelity` in `manifest.json`. That file is what `export_design` builds on.
 
 Only what is on screen is in the page tree: hidden elements, screen-reader-only text and invisible measuring copies are left out, since changing them changes nothing anyone sees.
 
-`changes.json` (from `report`, or `diff --json`) lists, per state, each change: `kind` (`added`, `removed`, `changed`), `where` (the named elements it is in and the text just before it), `now` and `was` (what it holds: components, interactive elements and text), `styles` (for a restyle: each property, before and after), `count` (one change repeated, like a cell in every row) and `boxes.before` / `boxes.after` (where it is on each page).
+`changes.json` (from `create_review`, or `find_changes --json`) lists, per state, each change: `kind` (`added`, `removed`, `changed`), `where` (the named elements it is in and the text just before it), `now` and `was` (what it holds: components, interactive elements and text), `styles` (for a restyle: each property, before and after), `count` (one change repeated, like a cell in every row) and `boxes.before` / `boxes.after` (where it is on each page).
 
 ## How changes are found
 

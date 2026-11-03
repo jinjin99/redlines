@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig, shoot } from '../src/shoot.js';
+import { captureStates, loadConfig } from '../src/capture.js';
 
 export const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -31,7 +31,7 @@ export async function fixtureShots() {
         for (const side of ['before', 'after']) {
             const server = await serve(path.join(FIXTURES, side));
             dirs[side] = path.join(out, side);
-            try { await shoot({ config, base: server.base, out: dirs[side], log: () => {} }); } finally { server.close(); }
+            try { await captureStates({ config, base: server.base, out: dirs[side], log: () => {} }); } finally { server.close(); }
         }
         return { ...dirs, out };
     })();

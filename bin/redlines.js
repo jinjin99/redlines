@@ -1,86 +1,87 @@
 #!/usr/bin/env node
-// redlines <command>: see README.md.
+// redlines <tool> --<input> <value> …: the same tools as the MCP server (src/tools.js), with the same
+// names and inputs. Arrays and objects are given as JSON (--steps '[{"click":"text=Save"}]'), a
+// boolean as a bare flag (--fullPage). `redlines mcp` serves them over stdio instead.
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { diffTrees, formatChanges } from '../src/diff.js';
-import { exportStates } from '../src/export.js';
-import { compareFolders, writeReport } from '../src/report.js';
-import { loadConfig, shoot } from '../src/shoot.js';
+import { z } from 'zod';
 
-const HELP = `redlines — see what a UI change does, state by state
+import { TOOLS } from '../src/tools.js';
 
-  redlines shoot --out <dir> [--base <url>] [--config <file>] [state…]
-      open each state the config lists and save its page tree and screenshot
-  redlines diff <before> <after> [--json]
-      the changes between two shots (folders from shoot, or two tree .json files)
-  redlines report <before> <after> --out <dir> [--title <text>]
-      a review page: before and after side by side, each change boxed and numbered
-  redlines export <shots> --out <dir> [--format html|dc] [--title <text>]
-      the states as editable design files: standalone HTML, or a Claude Design canvas (dc)
-  redlines mcp
-      an MCP server on stdio, for coding agents: claude mcp add redlines -- npx redlines mcp
-`;
+const kindOf = schema => {
+    let s = schema;
+    while (s?._def && ['ZodOptional', 'ZodDefault', 'ZodEffects', 'ZodNullable'].includes(s._def.typeName)) s = s._def.innerType ?? s._def.schema;
+    return s?._def?.typeName;
+};
 
-const [command, ...rest] = process.argv.slice(2);
-const flags = {}, args = [];
-for (let i = 0; i < rest.length; i++) {
-    const a = rest[i];
-    if (!a.startsWith('--')) { args.push(a); continue; }
-    const name = a.slice(2);
-    if (name === 'json') flags.json = true;
-    else flags[name] = rest[++i];
+function help() {
+    const lines = ['redlines — see what a UI change does, state by state', '', 'redlines <tool> [--<input> <value> …]', ''];
+    for (const t of TOOLS) {
+        const inputs = Object.entries(t.input).map(([k, s]) => {
+            const kind = kindOf(s), optional = s.isOptional();
+            const value = kind === 'ZodBoolean' ? '' : kind === 'ZodArray' || kind === 'ZodRecord' || kind === 'ZodObject' ? ' <json>' : ` <${k}>`;
+            return optional ? `[--${k}${value}]` : `--${k}${value}`;
+        });
+        lines.push(`  ${t.name} ${inputs.join(' ')}`, `      ${t.description}`, '');
+    }
+    lines.push('  mcp', '      Serve these tools over stdio for coding agents: claude mcp add redlines -- npx redlines mcp');
+    return lines.join('\n');
+}
+
+/** --name value pairs, typed by the tool's inputs. */
+function parse(tool, argv) {
+    const args = {};
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i];
+        if (!a.startsWith('--')) throw new Error(`Unexpected "${a}": inputs are --<name> <value>`);
+        const name = a.slice(2);
+        const schema = tool.input[name];
+        if (!schema) throw new Error(`${tool.name} has no input --${name}; it takes ${Object.keys(tool.input).map(k => `--${k}`).join(', ')}`);
+        const kind = kindOf(schema);
+        if (kind === 'ZodBoolean') { args[name] = true; continue; }
+        const raw = argv[++i];
+        if (raw === undefined) throw new Error(`--${name} needs a value`);
+        if (kind === 'ZodNumber') args[name] = Number(raw);
+        else if (kind === 'ZodArray' || kind === 'ZodRecord' || kind === 'ZodObject') {
+            try { args[name] = JSON.parse(raw); } catch (e) {
+                // A list of plain words can be given comma-separated (--states list,details).
+                if (kind === 'ZodArray' && /^[\w,-]+$/.test(raw)) args[name] = raw.split(',');
+                else throw new Error(`--${name} is JSON: ${e.message}`);
+            }
+        } else args[name] = raw;
+    }
+    return z.object(tool.input).strict().parse(args);
 }
 
 async function main() {
-    switch (command) {
-        case 'shoot': {
-            if (!flags.out) throw new Error('shoot needs --out <dir>');
-            const config = await loadConfig(flags.config);
-            const results = await shoot({ config, base: flags.base, out: path.resolve(flags.out), only: args });
-            if (results.some(r => !r.ok)) process.exitCode = 1;
-            return;
-        }
-        case 'diff': {
-            if (args.length !== 2) throw new Error('diff <before> <after>');
-            if (args.every(a => a.endsWith('.json') && fs.statSync(a).isFile())) {
-                const list = diffTrees(...args.map(a => JSON.parse(fs.readFileSync(a, 'utf8'))));
-                console.log(flags.json ? JSON.stringify(list, null, 2) : formatChanges(list));
-                return;
-            }
-            const states = compareFolders(...args);
-            if (flags.json) { console.log(JSON.stringify(states.map(({ name, title, status, changes }) => ({ name, title, status, changes })), null, 2)); return; }
-            for (const s of states) {
-                if (s.status === 'same') continue;
-                console.log(`### ${s.title} (${s.name})\n${s.status === 'changed' ? formatChanges(s.changes) : s.status === 'added' ? 'a new state' : 'removed'}\n`);
-            }
-            const same = states.filter(s => s.status === 'same').map(s => s.name);
-            if (same.length) console.log(`no changes: ${same.join(', ')}`);
-            return;
-        }
-        case 'report': {
-            if (args.length !== 2 || !flags.out) throw new Error('report <before> <after> --out <dir>');
-            const states = compareFolders(...args);
-            const file = writeReport(states, path.resolve(flags.out), { title: flags.title });
-            const total = states.reduce((n, s) => n + s.changes.length, 0);
-            console.log(`${file}: ${total} change${total === 1 ? '' : 's'} in ${states.filter(s => s.status !== 'same').length} of ${states.length} states`);
-            return;
-        }
-        case 'export': {
-            if (args.length !== 1 || !flags.out) throw new Error('export <shots> --out <dir> [--format html|dc]');
-            const { files, notes } = exportStates(args[0], path.resolve(flags.out), { format: flags.format ?? 'html', title: flags.title });
-            console.log(`${files.length} file${files.length === 1 ? '' : 's'} in ${path.resolve(flags.out)}:\n  ${files.join('\n  ')}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}`);
-            return;
-        }
-        case 'mcp': {
-            const { serveStdio } = await import('../src/mcp.js');
-            await serveStdio();
-            return;
-        }
-        default:
-            console.log(HELP);
-            if (command && command !== 'help' && command !== '--help') process.exitCode = 1;
+    const [command, ...argv] = process.argv.slice(2);
+    if (command === 'mcp') {
+        const { serveStdio } = await import('../src/mcp.js');
+        await serveStdio();
+        return;
     }
+    const tool = TOOLS.find(t => t.name === command);
+    if (!tool) {
+        console.log(help());
+        if (command && !['help', '--help', '-h'].includes(command)) { console.error(`\nredlines: no tool "${command}"`); process.exitCode = 1; }
+        return;
+    }
+    const root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd();
+    let args;
+    try { args = parse(tool, argv); } catch (e) {
+        throw new Error(e instanceof z.ZodError ? e.issues.map(i => `--${i.path.join('.') || '?'}: ${i.message}`).join('; ') : e.message);
+    }
+    const r = await tool.run(args, { root, log: m => console.error(m) });
+    if (r.image) {
+        // The screenshot an agent gets inline over MCP, as a file here.
+        const file = path.join(root, '.redlines', `${tool.name}.png`);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, r.image);
+        console.log(`screenshot: ${file}`);
+    }
+    console.log(r.text);
+    if (r.isError) process.exitCode = 1;
 }
 
 main().catch(error => {

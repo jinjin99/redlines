@@ -1,16 +1,16 @@
-// Exports a shot folder's states (their frozen HTML) as editable design files. Formats:
-//   html  each state as a standalone .html (what shoot already writes), copied into one folder
+// Exports a captured folder's states (their frozen HTML) as editable design files. Formats:
+//   html  each state as a standalone .html (what capture_states already writes), copied into one folder
 //   dc    a Claude Design canvas: project/<state>.dc.html artboards in a row and project/canvas.json
 import fs from 'node:fs';
 import path from 'node:path';
 
 function statesOf(dir) {
     const file = path.join(dir, 'manifest.json');
-    if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: shoot into it first`);
+    if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: capture into it first`);
     const m = JSON.parse(fs.readFileSync(file, 'utf8'));
     const states = (m.states ?? []).filter(s => s.html);
     for (const s of states) if (!/^[\w-]+$/.test(s.name) || s.html !== `${s.name}.html`) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
-    if (!states.length) throw new Error(`${dir} has no frozen HTML: shoot without "html: false" in the config`);
+    if (!states.length) throw new Error(`${dir} has no frozen HTML: capture without "html: false" in the config`);
     return states;
 }
 
@@ -70,7 +70,7 @@ class Component extends DCLogic {
  * Writes the export; returns { files, notes }: the files written, relative to `out`, and what a person
  * has to finish by hand (a canvas takes no inline images: they are uploaded as its assets).
  */
-export function exportStates(dir, out, { format = 'html', title } = {}) {
+export function exportDesign(dir, out, { format = 'html', title } = {}) {
     const states = statesOf(dir);
     const written = [], notes = [];
     if (format === 'html') {

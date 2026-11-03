@@ -1,8 +1,9 @@
-// redlines as a library: shoot states, compare page trees, write the review page.
-export { snapshot } from './page/snapshot.js';
-export { align, diffTrees, formatChanges, tokensOf } from './diff.js';
-export { exportStates } from './export.js';
-export { compareFolders, writeReport } from './report.js';
-export { loadConfig, shoot } from './shoot.js';
+// redlines as a library: the tools (src/tools.js) and the functions under them.
+export { TOOLS, INSTRUCTIONS } from './tools.js';
 export { createServer } from './mcp.js';
+export { captureStates, loadConfig, viewPage } from './capture.js';
+export { align, diffTrees, formatChanges, tokensOf } from './diff.js';
+export { exportDesign } from './export.js';
+export { findChanges, writeReport } from './report.js';
 export { outline } from './outline.js';
+export { snapshot } from './page/snapshot.js';

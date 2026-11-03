@@ -98,7 +98,7 @@ export async function openState(browser, { url, steps = [], mocks = {}, viewport
 }
 
 /** One page as it is now: { tree, screenshot (PNG buffer), errors }, without writing anything. */
-export async function look({ url, steps, mocks, viewport, settle, fullPage = false }) {
+export async function viewPage({ url, steps, mocks, viewport, settle, fullPage = false }) {
     const browser = await launch();
     try {
         const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle });
@@ -114,7 +114,7 @@ export async function look({ url, steps, mocks, viewport, settle, fullPage = fal
 }
 
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
-export async function shoot({ config, base, out, only, log = console.log }) {
+export async function captureStates({ config, base, out, only, log = console.log }) {
     const baseURL = base ?? config.baseURL;
     if (!baseURL) throw new Error('No base URL: pass --base <url> or set baseURL in the config');
     const names = only?.length ? only : Object.keys(config.states);

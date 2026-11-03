@@ -1,174 +1,30 @@
-// redlines as an MCP server (stdio): the tools a coding agent uses to look at the pages it changed
-// and to show people what changed. Every path it reads or writes is inside the project folder (the
-// server's working directory, or REDLINES_ROOT). Nothing is written to stdout but the protocol.
+// redlines as an MCP server (stdio), made from the tool list (src/tools.js). Nothing is written to
+// stdout but the protocol.
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
 
-import { formatChanges } from './diff.js';
-import { exportStates } from './export.js';
-import { outline } from './outline.js';
-import { compareFolders, writeReport } from './report.js';
-import { loadConfig, look, shoot } from './shoot.js';
+import { INSTRUCTIONS, TOOLS } from './tools.js';
 
 const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
-const INSTRUCTIONS = `redlines shows what a UI change does to the pages, state by state.
-
-Use it whenever you change UI code:
-1. See your work. After changing a page, call \`view_page\` on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use \`steps\` to reach dialogs, menus and filled-in forms, and \`mocks\` for data states (an empty list, an error).
-2. Show the change to people (designers, PMs, reviewers):
-   - \`list_states\` tells you which states the project already lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
-   - You need the app running twice: before the change (usually the main branch: a second checkout, e.g. \`git worktree add\`, with its own dev server on another port) and after it (your working copy). If you don't know how to run the app, ask the user for the two URLs.
-   - \`capture_states\` with the before URL into one folder and the after URL into another (same config), then \`find_changes\` between them. Check the change list matches what you meant to change: anything you did not intend is worth telling the user about.
-   - \`create_review\` writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
-   - \`export_design\` gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages).
-Folders default to .redlines/ in the project. Paths must stay inside the project.`;
-
-/** The project folder, and a path inside it (relative paths are from the project). */
-function inProject(root, p, fallback) {
-    const full = path.resolve(root, p ?? fallback);
-    if (full !== root && !full.startsWith(root + path.sep)) throw new Error(`${p} is outside the project (${root})`);
-    return full;
-}
-
-const text = t => ({ content: [{ type: 'text', text: t }] });
-const fail = e => ({ content: [{ type: 'text', text: `redlines: ${e.message}` }], isError: true });
-const quiet = () => {};
-
-const stepSchema = z.union([
-    z.object({ click: z.string() }),
-    z.object({ fill: z.tuple([z.string(), z.string()]) }),
-    z.object({ press: z.string() }),
-    z.object({ hover: z.string() }),
-    z.object({ select: z.tuple([z.string(), z.string()]) }),
-    z.object({ waitFor: z.string() }),
-    z.object({ wait: z.number().int().min(0).max(30000) }),
-]);
-const httpUrl = z.string().url().refine(u => /^https?:\/\//.test(u), 'an http(s) URL');
-
 export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd() } = {}) {
     const server = new McpServer({ name: 'redlines', version: VERSION }, { instructions: INSTRUCTIONS });
-
-    server.registerTool('view_page', {
-        title: 'View a page',
-        description: 'Open a page of the running app (optionally doing steps first: click, fill, press, hover, select, waitFor, wait) and return a screenshot, an outline of what is on screen (components, buttons, links, text) and any page errors. Writes nothing.',
-        inputSchema: {
-            url: httpUrl.describe('The page, e.g. http://localhost:3000/orders'),
-            steps: z.array(stepSchema).optional().describe('Done in order after the page loads. Selectors are Playwright selectors: text=Save, role=button[name="Save"], CSS.'),
-            mocks: z.record(z.any()).optional().describe('"GET /api/orders": <JSON answer> (or { status, json | body }). Paths match from the start; * matches anything.'),
-            width: z.number().int().min(320).max(3840).optional(),
-            height: z.number().int().min(320).max(4000).optional(),
-            fullPage: z.boolean().optional().describe('Screenshot the whole page instead of the first screen.'),
-        },
-        annotations: { readOnlyHint: true, openWorldHint: true },
-    }, async ({ url, steps, mocks, width, height, fullPage }) => {
-        try {
-            const { tree, screenshot, errors } = await look({ url, steps, mocks, viewport: { width: width ?? 1280, height: height ?? 800 }, fullPage });
-            return {
-                content: [
-                    { type: 'image', data: screenshot.toString('base64'), mimeType: 'image/png' },
-                    { type: 'text', text: `${tree.title || '(no title)'} — ${tree.url}\npage size ${tree.size.width}×${tree.size.height}${errors.length ? `\npage errors:\n  ${errors.join('\n  ')}` : ''}\n\n${outline(tree)}` },
-                ],
-            };
-        } catch (e) { return fail(e); }
-    });
-
-    server.registerTool('list_states', {
-        title: 'List the states to capture',
-        description: "Read the project's redlines config (redlines.config.mjs/.js/.json in the project folder): its file, base URL and states. Without one, returns how to write it.",
-        inputSchema: { file: z.string().optional().describe('A config file in the project, if not the default name.') },
-        annotations: { readOnlyHint: true },
-    }, async ({ file }) => {
-        try {
-            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
-            const states = Object.entries(config.states).map(([name, s]) => `  ${name}: ${s.title ?? name} — ${s.path ?? '/'}${s.steps?.length ? `, ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}${s.mocks ? `, mocks ${Object.keys(s.mocks).join(', ')}` : ''}`);
-            return text(`${path.relative(root, config.file)}\nbaseURL: ${config.baseURL ?? '(none: pass base to capture_states)'}\nglobal mocks: ${Object.keys(config.mocks ?? {}).join(', ') || 'none'}\nstates:\n${states.join('\n')}`);
-        } catch (e) {
-            if (!/No config/.test(e.message)) return fail(e);
-            return text(`No redlines config in ${root}. Write redlines.config.mjs there, for example:
-
-export default {
-    viewport: { width: 1280, height: 800 },
-    // API answers every state gets, so both versions show the same data.
-    mocks: { 'GET /api/orders': [{ id: '#1001', customer: 'Ada Lovelace', status: 'Paid' }] },
-    states: {
-        list: { path: '/orders', title: 'Order list' },
-        details: { path: '/orders', title: 'Order details', steps: [{ click: 'text=#1001' }] },
-        empty: { path: '/orders', title: 'No orders', mocks: { 'GET /api/orders': [] } },
-    },
-};
-
-State names are letters, digits, - and _. Steps: click, fill [selector, text], press, hover, select [selector, value], waitFor, wait (ms). List every screen and state the change touches, including dialogs and empty or error states.`);
-        }
-    });
-
-    server.registerTool('capture_states', {
-        title: 'Capture one version of the app',
-        description: "Open each state in the config at `base` (one running version of the app) and save its page tree, screenshot and standalone HTML into `out`. Capture the version before the change and the one after it into two folders, then call find_changes.",
-        inputSchema: {
-            base: httpUrl.describe('Where this version runs, e.g. http://localhost:3000'),
-            out: z.string().describe('Folder in the project, e.g. .redlines/before or .redlines/after'),
-            states: z.array(z.string()).optional().describe('Only these states (default: all).'),
-            config: z.string().optional(),
-        },
-        annotations: { openWorldHint: true },
-    }, async ({ base, out, states, config: file }) => {
-        try {
-            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
-            const dir = inProject(root, out);
-            const results = await shoot({ config, base, out: dir, only: states, log: quiet });
-            const lines = results.map(r => (r.ok ? `ok   ${r.name}${r.fidelity != null ? ` (html ${(r.fidelity * 100).toFixed(1)}% like the page)` : ''}${r.errors.length ? `; page errors: ${r.errors.join(' | ')}` : ''}` : `FAIL ${r.name}: ${r.error}`));
-            return { content: [{ type: 'text', text: `${path.relative(root, dir)}:\n${lines.join('\n')}` }], isError: results.some(r => !r.ok) };
-        } catch (e) { return fail(e); }
-    });
-
-    server.registerTool('find_changes', {
-        title: 'Find what changed',
-        description: 'Compare two captured folders (before, after) and list, per state, each change: added, removed or changed, where on the page, what it holds now and before, style changes property by property.',
-        inputSchema: { before: z.string(), after: z.string() },
-        annotations: { readOnlyHint: true },
-    }, async ({ before, after }) => {
-        try {
-            const states = compareFolders(inProject(root, before), inProject(root, after));
-            const parts = states.filter(s => s.status !== 'same').map(s => `### ${s.title} (${s.name})\n${s.status === 'changed' ? formatChanges(s.changes) : s.status === 'added' ? 'a new state (not shot before)' : 'shot before, not after'}`);
-            const same = states.filter(s => s.status === 'same').map(s => s.name);
-            return text(`${parts.join('\n\n') || 'no changes'}${same.length ? `\n\nno changes: ${same.join(', ')}` : ''}`);
-        } catch (e) { return fail(e); }
-    });
-
-    server.registerTool('create_review', {
-        title: 'Create the review page',
-        description: 'Write a review page for two captured folders: each state before and after side by side, every change boxed and numbered, and the list of changes. Returns the path of its index.html.',
-        inputSchema: { before: z.string(), after: z.string(), out: z.string().optional().describe('Default .redlines/report'), title: z.string().max(200).optional() },
-    }, async ({ before, after, out, title }) => {
-        try {
-            const states = compareFolders(inProject(root, before), inProject(root, after));
-            const file = writeReport(states, inProject(root, out, '.redlines/report'), { title });
-            const total = states.reduce((n, s) => n + s.changes.length, 0);
-            return text(`${file}\n${total} change${total === 1 ? '' : 's'} in ${states.filter(s => s.status !== 'same').length} of ${states.length} states. Open it in a browser, or put the folder on any static host.`);
-        } catch (e) { return fail(e); }
-    });
-
-    server.registerTool('export_design', {
-        title: 'Export editable designs',
-        description: 'Export the states of a captured folder as editable design files: "dc" writes a Claude Design canvas (project/canvas.json and one artboard per state) to publish; "html" copies the standalone pages.',
-        inputSchema: { shots: z.string(), out: z.string().optional().describe('Default .redlines/design'), format: z.enum(['dc', 'html']).optional(), title: z.string().max(200).optional() },
-    }, async ({ shots, out, format, title }) => {
-        try {
-            const dir = inProject(root, out, '.redlines/design');
-            const { files, notes } = exportStates(inProject(root, shots), dir, { format: format ?? 'dc', title });
-            return text(`${dir}\n  ${files.join('\n  ')}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}`);
-        } catch (e) { return fail(e); }
-    });
-
+    for (const tool of TOOLS) {
+        server.registerTool(tool.name, { title: tool.title, description: tool.description, inputSchema: tool.input, annotations: tool.annotations }, async args => {
+            try {
+                const r = await tool.run(args, { root });
+                return { content: [...(r.image ? [{ type: 'image', data: r.image.toString('base64'), mimeType: 'image/png' }] : []), { type: 'text', text: r.text }], ...(r.isError ? { isError: true } : {}) };
+            } catch (e) {
+                return { content: [{ type: 'text', text: `redlines: ${e.message}` }], isError: true };
+            }
+        });
+    }
     return server;
 }
 
 export async function serveStdio() {
-    const server = createServer();
-    await server.connect(new StdioServerTransport());
+    await createServer().connect(new StdioServerTransport());
 }

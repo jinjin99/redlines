@@ -8,11 +8,11 @@ import { diffTrees } from './diff.js';
 
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
-/** The two shot folders' states compared: [{ name, title, status: 'changed'|'same'|'added'|'removed', changes, before?, after? }]. */
-export function compareFolders(beforeDir, afterDir) {
+/** The two captured folders' states compared: [{ name, title, status: 'changed'|'same'|'added'|'removed', changes, before?, after? }]. */
+export function findChanges(beforeDir, afterDir) {
     const manifest = dir => {
         const file = path.join(dir, 'manifest.json');
-        if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: shoot into it first (redlines shoot --out ${dir})`);
+        if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: capture into it first (redlines capture_states)`);
         const m = readJson(file);
         // Files are named after their state, in the folder itself: nothing else is read.
         for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png` || (s.html && s.html !== `${s.name}.html`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
@@ -35,7 +35,7 @@ export function compareFolders(beforeDir, afterDir) {
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** Writes the review page for `states` (compareFolders) into `out`. Returns the index.html path. */
+/** Writes the review page for `states` (findChanges) into `out`. Returns the index.html path. */
 export function writeReport(states, out, { title = 'UI changes' } = {}) {
     fs.mkdirSync(path.join(out, 'images'), { recursive: true });
     const data = states.map(s => {

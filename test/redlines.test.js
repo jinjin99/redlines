@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { align, diffTrees, formatChanges } from '../src/diff.js';
-import { compareFolders, writeReport } from '../src/report.js';
+import { findChanges, writeReport } from '../src/report.js';
 import { fixtureShots } from './helpers.js';
 
 const tree = (...children) => ({ version: 1, root: { tag: 'body', style: {}, box: [0, 0, 100, 100], children } });
@@ -45,7 +45,7 @@ test('diff: inherited styles count where they are set, not on every child', () =
 
 test('shoot → diff: the fixture app, before and after', async () => {
     const { before, after } = await fixtureShots();
-    const states = compareFolders(before, after);
+    const states = findChanges(before, after);
     const list = states.find(s => s.name === 'list');
     assert.equal(list.status, 'changed');
     const text = formatChanges(list.changes);
@@ -71,7 +71,7 @@ test('shoot → diff: the fixture app, before and after', async () => {
 test('report: index.html, screenshots and changes.json', async () => {
     const { before, after, out } = await fixtureShots();
     const dir = path.join(out, 'report');
-    const file = writeReport(compareFolders(before, after), dir, { title: 'Orders <test>' });
+    const file = writeReport(findChanges(before, after), dir, { title: 'Orders <test>' });
     const html = fs.readFileSync(file, 'utf8');
     assert.match(html, /<title>Orders &lt;test&gt;<\/title>/);
     assert.ok(fs.existsSync(path.join(dir, 'images/after-list.png')));
@@ -83,14 +83,14 @@ test('report: a manifest naming files outside its folder is refused', async () =
     const bad = path.join(out, 'bad');
     fs.mkdirSync(bad, { recursive: true });
     fs.writeFileSync(path.join(bad, 'manifest.json'), JSON.stringify({ states: [{ name: 'list', tree: '../before/list.json', image: 'list.png' }] }));
-    assert.throws(() => compareFolders(bad, after), /unexpected state entry/);
+    assert.throws(() => findChanges(bad, after), /unexpected state entry/);
     assert.ok(before);
 });
 
 test('React: components are named, with their props', async () => {
     const { serve, FIXTURES } = await import('./helpers.js');
     const os = await import('node:os');
-    const { shoot } = await import('../src/shoot.js');
+    const { captureStates } = await import('../src/capture.js');
     // The fixture page with React beside it (the UMD builds from node_modules).
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-react-'));
     for (const f of ['before.html', 'after.html', 'app.js']) fs.copyFileSync(path.join(FIXTURES, 'react', f), path.join(dir, f));
@@ -99,7 +99,7 @@ test('React: components are named, with their props', async () => {
     const server = await serve(dir);
     try {
         const config = { states: { before: { path: '/before.html' }, after: { path: '/after.html' } } };
-        await shoot({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
+        await captureStates({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
     } finally { server.close(); }
     const read = n => JSON.parse(fs.readFileSync(path.join(dir, 'shots', `${n}.json`), 'utf8'));
     const text = formatChanges(diffTrees(read('before'), read('after')));
@@ -122,10 +122,10 @@ test('shoot: each state frozen as standalone HTML that renders like the page', a
 });
 
 test('export: a Claude Design canvas, one artboard per state', async () => {
-    const { exportStates } = await import('../src/export.js');
+    const { exportDesign } = await import('../src/export.js');
     const { after, out } = await fixtureShots();
     const dir = path.join(out, 'dc');
-    const { files } = exportStates(after, dir, { format: 'dc', title: 'Orders' });
+    const { files } = exportDesign(after, dir, { format: 'dc', title: 'Orders' });
     assert.deepEqual(files, ['project/canvas.json', 'project/list.dc.html', 'project/details.dc.html']);
     const index = JSON.parse(fs.readFileSync(path.join(dir, 'project/canvas.json'), 'utf8'));
     assert.deepEqual(index.order, ['list.dc.html', 'details.dc.html']);
