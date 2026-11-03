@@ -2,6 +2,28 @@
   "name": "redlines",
   "version": "0.1.0",
   "description": "See what a UI change does, state by state: before and after of every page, each change found, boxed and numbered.",
+  "keywords": [
+    "ui",
+    "diff",
+    "visual-review",
+    "visual-regression",
+    "design",
+    "design-review",
+    "redlines",
+    "playwright",
+    "mcp",
+    "msw"
+  ],
+  "homepage": "https://github.com/jinjin99/redlines#readme",
+  "bugs": {
+    "url": "https://github.com/jinjin99/redlines/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jinjin99/redlines.git"
+  },
+  "license": "MIT",
+  "author": "jinjin99",
   "type": "module",
   "bin": {
     "redlines": "dist/bin/redlines.js"
@@ -12,12 +34,17 @@
       "default": "./dist/src/index.js"
     }
   },
+  "types": "dist/src/index.d.ts",
   "files": [
     "dist/src",
     "dist/bin",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "lint": "eslint .",
@@ -25,35 +52,11 @@
     "demo": "tsc && node dist/scripts/demo.js",
     "prepublishOnly": "npm run lint && npm test"
   },
-  "engines": {
-    "node": ">=20"
-  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "playwright-core": "1.63.0",
     "zod": "3.25.76"
   },
-  "keywords": [
-    "ui",
-    "diff",
-    "visual-review",
-    "design",
-    "redlines",
-    "playwright"
-  ],
-  "license": "MIT",
-  "devDependencies": {
-    "@eslint/js": "10.0.1",
-    "@types/node": "20.19.43",
-    "eslint": "10.12.0",
-    "mockttp": "4.6.3",
-    "msw": "2.15.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.71.1"
-  },
-  "types": "dist/src/index.d.ts",
   "peerDependencies": {
     "msw": ">=2.4",
     "mockttp": ">=4.6"
@@ -65,5 +68,16 @@
     "mockttp": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "20.19.43",
+    "eslint": "10.12.0",
+    "mockttp": "4.6.3",
+    "msw": "2.15.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
   }
 }
