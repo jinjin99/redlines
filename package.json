@@ -1,0 +1,40 @@
+{
+  "name": "redlines",
+  "version": "0.1.0",
+  "description": "See what a UI change does, state by state: before and after of every page, each change found, boxed and numbered.",
+  "type": "module",
+  "bin": {
+    "redlines": "bin/redlines.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  },
+  "keywords": [
+    "ui",
+    "diff",
+    "visual-review",
+    "design",
+    "redlines",
+    "playwright"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

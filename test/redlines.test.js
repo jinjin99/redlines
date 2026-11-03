@@ -1,0 +1,109 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+
+import { align, diffTrees, formatChanges } from '../src/diff.js';
+import { compareFolders, writeReport } from '../src/report.js';
+import { fixtureShots } from './helpers.js';
+
+const tree = (...children) => ({ version: 1, root: { tag: 'body', style: {}, box: [0, 0, 100, 100], children } });
+const el = (tag, extra = {}, ...children) => ({ tag, style: {}, box: [0, 0, 10, 10], ...extra, children });
+const text = t => ({ text: t, box: [0, 0, 10, 10] });
+
+test('align: equal sequences are one equal run', () => {
+    assert.deepEqual(align(['a', 'b'], ['a', 'b']), [{ op: 'equal', a0: 0, a1: 2, b0: 0, b1: 2 }]);
+});
+
+test('diff: a changed text is one change with what it was', () => {
+    const list = diffTrees(tree(el('p', { name: 'note' }, text('Old copy'))), tree(el('p', { name: 'note' }, text('New copy'))));
+    assert.equal(list.length, 1);
+    assert.equal(list[0].kind, 'changed');
+    assert.deepEqual(list[0].now, ['"New copy"']);
+    assert.deepEqual(list[0].was, ['"Old copy"']);
+});
+
+test('diff: a component whose props changed says so', () => {
+    const badge = tone => el('span', { component: { name: 'Badge', props: { tone } } }, text('Paid'));
+    const [c] = diffTrees(tree(badge('info')), tree(badge('success')));
+    assert.equal(c.kind, 'changed');
+    assert.match(c.now[0], /<Badge tone="success">/);
+});
+
+test('diff: a style change is listed property by property', () => {
+    const btn = color => ({ ...el('button', { name: 'save' }, text('Save')), style: { 'background-color': color } });
+    const [c] = diffTrees(tree(btn('rgb(0, 0, 255)')), tree(btn('rgb(0, 128, 0)')));
+    assert.deepEqual(c.styles, [{ who: 'save', property: 'background-color', was: 'rgb(0, 0, 255)', now: 'rgb(0, 128, 0)' }]);
+});
+
+test('diff: inherited styles count where they are set, not on every child', () => {
+    const page = color => ({ ...el('div', { name: 'card' }, el('p', {}, text('a')), el('p', {}, text('b'))), style: { color } });
+    const withChildren = color => { const p = page(color); p.children.forEach(c => (c.style = { color })); return p; };
+    const list = diffTrees(tree(withChildren('rgb(0, 0, 0)')), tree(withChildren('rgb(255, 0, 0)')));
+    assert.equal(list.length, 1);
+});
+
+test('shoot → diff: the fixture app, before and after', async () => {
+    const { before, after } = await fixtureShots();
+    const states = compareFolders(before, after);
+    const list = states.find(s => s.name === 'list');
+    assert.equal(list.status, 'changed');
+    const text = formatChanges(list.changes);
+    // The header: Export restyled and a New order button beside it, as one change.
+    assert.match(text, /changed in page › page-header.*"Export".*"New order"/);
+    // The new column: its heading and a cell in every row, one change.
+    const column = list.changes.find(c => /column "Refund"/.test(c.where));
+    assert.equal(column.kind, 'added');
+    assert.equal(column.count, 4);
+    // The badge: restyled in every paid row.
+    const badge = list.changes.find(c => /column "Status"/.test(c.where));
+    assert.equal(badge.count, 2);
+    assert.ok(badge.styles.some(s => s.property === 'font-weight' && s.now === '600'));
+    // Screen-reader text is not on screen, so not in the tree.
+    assert.doesNotMatch(fs.readFileSync(path.join(before, 'list.json'), 'utf8'), /"text":"Order list"/);
+    // The dialog state, reached by a click: its copy changed.
+    const details = states.find(s => s.name === 'details');
+    assert.match(formatChanges(details.changes), /Order details.*"Shipped with express delivery\." {2}\(was: "Shipped with standard delivery\."\)/);
+    // Boxes: an added change is boxed on the page after, inside the page.
+    for (const b of column.boxes.after) assert.ok(b[0] >= 0 && b[1] >= 0 && b[0] + b[2] <= 1024);
+});
+
+test('report: index.html, screenshots and changes.json', async () => {
+    const { before, after, out } = await fixtureShots();
+    const dir = path.join(out, 'report');
+    const file = writeReport(compareFolders(before, after), dir, { title: 'Orders <test>' });
+    const html = fs.readFileSync(file, 'utf8');
+    assert.match(html, /<title>Orders &lt;test&gt;<\/title>/);
+    assert.ok(fs.existsSync(path.join(dir, 'images/after-list.png')));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'changes.json'), 'utf8')).length, 2);
+});
+
+test('report: a manifest naming files outside its folder is refused', async () => {
+    const { before, after, out } = await fixtureShots();
+    const bad = path.join(out, 'bad');
+    fs.mkdirSync(bad, { recursive: true });
+    fs.writeFileSync(path.join(bad, 'manifest.json'), JSON.stringify({ states: [{ name: 'list', tree: '../before/list.json', image: 'list.png' }] }));
+    assert.throws(() => compareFolders(bad, after), /unexpected state entry/);
+    assert.ok(before);
+});
+
+test('React: components are named, with their props', async () => {
+    const { serve, FIXTURES } = await import('./helpers.js');
+    const os = await import('node:os');
+    const { shoot } = await import('../src/shoot.js');
+    // The fixture page with React beside it (the UMD builds from node_modules).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-react-'));
+    for (const f of ['before.html', 'after.html', 'app.js']) fs.copyFileSync(path.join(FIXTURES, 'react', f), path.join(dir, f));
+    fs.copyFileSync(path.join(FIXTURES, '../../node_modules/react/umd/react.production.min.js'), path.join(dir, 'react.js'));
+    fs.copyFileSync(path.join(FIXTURES, '../../node_modules/react-dom/umd/react-dom.production.min.js'), path.join(dir, 'react-dom.js'));
+    const server = await serve(dir);
+    try {
+        const config = { states: { before: { path: '/before.html' }, after: { path: '/after.html' } } };
+        await shoot({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
+    } finally { server.close(); }
+    const read = n => JSON.parse(fs.readFileSync(path.join(dir, 'shots', `${n}.json`), 'utf8'));
+    const text = formatChanges(diffTrees(read('before'), read('after')));
+    assert.match(text, /<Badge tone="success"> "Active"/);
+    assert.match(text, /was: <Badge tone="info"> "Trial"/);
+    assert.match(text, /added in App › Card › actions, after "Upgrade": <Button> "Cancel plan"/);
+});
