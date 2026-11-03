@@ -7,10 +7,12 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { TOOLS } from '../src/tools.js';
+import { type Tool, TOOLS } from '../src/tools.js';
 
-const kindOf = schema => {
-    let s = schema;
+// zod's own description of a schema: unwrapped past optional and refinements to the kind of value it takes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- _def is zod's internal description.
+const kindOf = (schema: z.ZodTypeAny): string | undefined => {
+    let s: any = schema;
     while (s?._def && ['ZodOptional', 'ZodDefault', 'ZodEffects', 'ZodNullable'].includes(s._def.typeName)) s = s._def.innerType ?? s._def.schema;
     return s?._def?.typeName;
 };
@@ -30,8 +32,8 @@ function help() {
 }
 
 /** --name value pairs, typed by the tool's inputs. */
-function parse(tool, argv) {
-    const args = {};
+function parse(tool: Tool, argv: string[]): Record<string, unknown> {
+    const args: Record<string, unknown> = {};
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (!a.startsWith('--')) throw new Error(`Unexpected "${a}": inputs are --<name> <value>`);
@@ -47,7 +49,7 @@ function parse(tool, argv) {
             try { args[name] = JSON.parse(raw); } catch (e) {
                 // A list of plain words can be given comma-separated (--states list,details).
                 if (kind === 'ZodArray' && /^[\w,-]+$/.test(raw)) args[name] = raw.split(',');
-                else throw new Error(`--${name} is JSON: ${e.message}`);
+                else throw new Error(`--${name} is JSON: ${(e as Error).message}`);
             }
         } else args[name] = raw;
     }
@@ -70,7 +72,7 @@ async function main() {
     const root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd();
     let args;
     try { args = parse(tool, argv); } catch (e) {
-        throw new Error(e instanceof z.ZodError ? e.issues.map(i => `--${i.path.join('.') || '?'}: ${i.message}`).join('; ') : e.message);
+        throw new Error(e instanceof z.ZodError ? e.issues.map(i => `--${i.path.join('.') || '?'}: ${i.message}`).join('; ') : (e as Error).message);
     }
     const r = await tool.run(args, { root, log: m => console.error(m) });
     if (r.image) {

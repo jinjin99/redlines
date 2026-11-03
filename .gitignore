@@ -1,3 +1,4 @@
 node_modules/
 .redlines/
 .redlines-mcp-*/
+dist/

@@ -6,40 +6,55 @@ import path from 'node:path';
 
 import { diffTrees } from './diff.js';
 
-const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
+import type { Change, Manifest, PageTree } from './types.js';
+
+const readJson = <T>(file: string): T => JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+
+/** One side of a state: its screenshot and the page's size. */
+export interface Side { image: string; size: PageTree['size'] }
+
+/** A state of the two folders, compared. */
+export interface ComparedState {
+    name: string;
+    title: string;
+    status: 'changed' | 'same' | 'added' | 'removed';
+    changes: Change[];
+    before?: Side;
+    after?: Side;
+}
 
 /** The two captured folders' states compared: [{ name, title, status: 'changed'|'same'|'added'|'removed', changes, before?, after? }]. */
-export function findChanges(beforeDir, afterDir) {
-    const manifest = dir => {
+export function findChanges(beforeDir: string, afterDir: string): ComparedState[] {
+    const manifest = (dir: string): Manifest => {
         const file = path.join(dir, 'manifest.json');
         if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: capture into it first (redlines capture_states)`);
-        const m = readJson(file);
+        const m = readJson<Manifest>(file);
         // Files are named after their state, in the folder itself: nothing else is read.
         for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png` || (s.html && s.html !== `${s.name}.html`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
         return m;
     };
     const a = manifest(beforeDir), b = manifest(afterDir);
     const byName = new Map(a.states.map(s => [s.name, s]));
-    const out = [];
+    const out: ComparedState[] = [];
     for (const s of b.states) {
         const was = byName.get(s.name);
-        const after = readJson(path.join(afterDir, s.tree));
+        const after = readJson<PageTree>(path.join(afterDir, s.tree));
         if (!was) { out.push({ name: s.name, title: s.title, status: 'added', changes: [], after: { image: path.join(afterDir, s.image), size: after.size } }); continue; }
-        const before = readJson(path.join(beforeDir, was.tree));
+        const before = readJson<PageTree>(path.join(beforeDir, was.tree));
         const changes = diffTrees(before, after);
         out.push({ name: s.name, title: s.title, status: changes.length ? 'changed' : 'same', changes, before: { image: path.join(beforeDir, was.image), size: before.size }, after: { image: path.join(afterDir, s.image), size: after.size } });
     }
-    for (const s of a.states) if (!b.states.some(x => x.name === s.name)) out.push({ name: s.name, title: s.title, status: 'removed', changes: [], before: { image: path.join(beforeDir, s.image), size: readJson(path.join(beforeDir, s.tree)).size } });
+    for (const s of a.states) if (!b.states.some(x => x.name === s.name)) out.push({ name: s.name, title: s.title, status: 'removed', changes: [], before: { image: path.join(beforeDir, s.image), size: readJson<PageTree>(path.join(beforeDir, s.tree)).size } });
     return out;
 }
 
-const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const esc = (s: unknown) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Writes the review page for `states` (findChanges) into `out`. Returns the index.html path. */
-export function writeReport(states, out, { title = 'UI changes' } = {}) {
+export function writeReport(states: ComparedState[], out: string, { title = 'UI changes' }: { title?: string } = {}): string {
     fs.mkdirSync(path.join(out, 'images'), { recursive: true });
     const data = states.map(s => {
-        const copy = (side, img) => {
+        const copy = (side: 'before' | 'after', img?: Side) => {
             if (!img) return null;
             const rel = `images/${side}-${s.name}.png`;
             fs.copyFileSync(img.image, path.join(out, rel));

@@ -5,11 +5,12 @@ import { test } from 'node:test';
 
 import { align, diffTrees, formatChanges } from '../src/diff.js';
 import { findChanges, writeReport } from '../src/report.js';
+import type { Config, PageTree, TreeElement, TreeNode, TreeText } from '../src/types.js';
 import { fixtureShots } from './helpers.js';
 
-const tree = (...children) => ({ version: 1, root: { tag: 'body', style: {}, box: [0, 0, 100, 100], children } });
-const el = (tag, extra = {}, ...children) => ({ tag, style: {}, box: [0, 0, 10, 10], ...extra, children });
-const text = t => ({ text: t, box: [0, 0, 10, 10] });
+const tree = (...children: TreeNode[]): PageTree => ({ version: 1, url: 'about:blank', title: '', viewport: { width: 100, height: 100 }, size: { width: 100, height: 100 }, root: { tag: 'body', style: {}, box: [0, 0, 100, 100], children } });
+const el = (tag: string, extra: Partial<TreeElement> = {}, ...children: TreeNode[]): TreeElement => ({ tag, style: {}, box: [0, 0, 10, 10], ...extra, children });
+const text = (t: string): TreeText => ({ text: t, box: [0, 0, 10, 10] });
 
 test('align: equal sequences are one equal run', () => {
     assert.deepEqual(align(['a', 'b'], ['a', 'b']), [{ op: 'equal', a0: 0, a1: 2, b0: 0, b1: 2 }]);
@@ -24,45 +25,49 @@ test('diff: a changed text is one change with what it was', () => {
 });
 
 test('diff: a component whose props changed says so', () => {
-    const badge = tone => el('span', { component: { name: 'Badge', props: { tone } } }, text('Paid'));
+    const badge = (tone: string) => el('span', { component: { name: 'Badge', props: { tone } } }, text('Paid'));
     const [c] = diffTrees(tree(badge('info')), tree(badge('success')));
     assert.equal(c.kind, 'changed');
     assert.match(c.now[0], /<Badge tone="success">/);
 });
 
 test('diff: a style change is listed property by property', () => {
-    const btn = color => ({ ...el('button', { name: 'save' }, text('Save')), style: { 'background-color': color } });
+    const btn = (color: string): TreeElement => ({ ...el('button', { name: 'save' }, text('Save')), style: { 'background-color': color } });
     const [c] = diffTrees(tree(btn('rgb(0, 0, 255)')), tree(btn('rgb(0, 128, 0)')));
     assert.deepEqual(c.styles, [{ who: 'save', property: 'background-color', was: 'rgb(0, 0, 255)', now: 'rgb(0, 128, 0)' }]);
 });
 
 test('diff: inherited styles count where they are set, not on every child', () => {
-    const page = color => ({ ...el('div', { name: 'card' }, el('p', {}, text('a')), el('p', {}, text('b'))), style: { color } });
-    const withChildren = color => { const p = page(color); p.children.forEach(c => (c.style = { color })); return p; };
+    const page = (color: string): TreeElement => ({ ...el('div', { name: 'card' }, el('p', {}, text('a')), el('p', {}, text('b'))), style: { color } });
+    const withChildren = (color: string) => { const p = page(color); p.children!.forEach(c => ((c as TreeElement).style = { color })); return p; };
     const list = diffTrees(tree(withChildren('rgb(0, 0, 0)')), tree(withChildren('rgb(255, 0, 0)')));
     assert.equal(list.length, 1);
 });
 
-test('shoot → diff: the fixture app, before and after', async () => {
+test('capture → find changes: the fixture app, before and after', async () => {
     const { before, after } = await fixtureShots();
     const states = findChanges(before, after);
     const list = states.find(s => s.name === 'list');
+    assert.ok(list);
     assert.equal(list.status, 'changed');
     const text = formatChanges(list.changes);
     // The header: Export restyled and a New order button beside it, as one change.
     assert.match(text, /changed in page › page-header.*"Export".*"New order"/);
     // The new column: its heading and a cell in every row, one change.
     const column = list.changes.find(c => /column "Refund"/.test(c.where));
+    assert.ok(column);
     assert.equal(column.kind, 'added');
     assert.equal(column.count, 4);
     // The badge: restyled in every paid row.
     const badge = list.changes.find(c => /column "Status"/.test(c.where));
+    assert.ok(badge?.styles);
     assert.equal(badge.count, 2);
     assert.ok(badge.styles.some(s => s.property === 'font-weight' && s.now === '600'));
     // Screen-reader text is not on screen, so not in the tree.
     assert.doesNotMatch(fs.readFileSync(path.join(before, 'list.json'), 'utf8'), /"text":"Order list"/);
     // The dialog state, reached by a click: its copy changed.
     const details = states.find(s => s.name === 'details');
+    assert.ok(details);
     assert.match(formatChanges(details.changes), /Order details.*"Shipped with express delivery\." {2}\(was: "Shipped with standard delivery\."\)/);
     // Boxes: an added change is boxed on the page after, inside the page.
     for (const b of column.boxes.after) assert.ok(b[0] >= 0 && b[1] >= 0 && b[0] + b[2] <= 1024);
@@ -98,10 +103,10 @@ test('React: components are named, with their props', async () => {
     fs.copyFileSync(path.join(FIXTURES, '../../node_modules/react-dom/umd/react-dom.production.min.js'), path.join(dir, 'react-dom.js'));
     const server = await serve(dir);
     try {
-        const config = { states: { before: { path: '/before.html' }, after: { path: '/after.html' } } };
+        const config: Config = { file: 'inline', states: { before: { path: '/before.html' }, after: { path: '/after.html' } } };
         await captureStates({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
     } finally { server.close(); }
-    const read = n => JSON.parse(fs.readFileSync(path.join(dir, 'shots', `${n}.json`), 'utf8'));
+    const read = (n: string) => JSON.parse(fs.readFileSync(path.join(dir, 'shots', `${n}.json`), 'utf8')) as PageTree;
     const text = formatChanges(diffTrees(read('before'), read('after')));
     assert.match(text, /<Badge tone="success"> "Active"/);
     assert.match(text, /was: <Badge tone="info"> "Trial"/);

@@ -4,20 +4,44 @@
 // it is in, the text just before it), what it holds now and held before, and the boxes it covers on
 // each page. Runs of one shape in one place (a cell added to every row) fold into one change.
 
+import type { Box, Change, ChangeKind, PageTree, StyleChange, TreeNode } from './types.js';
+
+/** One step of a page read in order: an element opening, its closing, or a text. */
+export interface Token {
+    kind: 'open' | 'close' | 'text';
+    /** An element's `<Badge tone="info">` or `<div>`, a text's words; '' for a closing. */
+    label: string;
+    /** What a person calls an element (to say where a change is); not compared. */
+    name?: string | null;
+    /** An element's compared attributes and own styles, as JSON. */
+    look?: string;
+    tag?: string;
+    box: Box;
+}
+
+/** An alignment run: tokens a0..a1 of the first sequence against b0..b1 of the second. */
+export interface Run {
+    op: 'equal' | 'insert' | 'delete' | 'replace';
+    a0: number;
+    a1: number;
+    b0: number;
+    b1: number;
+}
+
 // Inherited styles count once, where they are set, not again on every element that inherits them.
 const INHERITED = new Set(['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform']);
-const DEFAULTS = { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none', 'box-shadow': 'none', opacity: '1', 'border-radius': '0px', gap: 'normal', 'text-decoration-line': 'none' };
+const DEFAULTS: Record<string, string> = { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none', 'box-shadow': 'none', opacity: '1', 'border-radius': '0px', gap: 'normal', 'text-decoration-line': 'none' };
 
 /**
  * A tree as tokens: { kind: 'open'|'close'|'text', label, name, look, box }. `label` is what an element
  * is (`<Button variant="primary">` for a component, `<div>` otherwise) or the text; `look` is its
  * compared attributes and own styles; `name` is what a person calls it, used to say where a change is.
  */
-export function tokensOf(tree) {
-    const out = [];
-    const visit = (n, parentStyle) => {
+export function tokensOf(tree: PageTree): Token[] {
+    const out: Token[] = [];
+    const visit = (n: TreeNode, parentStyle: Record<string, string>): void => {
         if ('text' in n) { out.push({ kind: 'text', label: n.text, box: n.box }); return; }
-        const style = {};
+        const style: Record<string, string> = {};
         for (const [k, v] of Object.entries(n.style ?? {})) {
             if (INHERITED.has(k) ? parentStyle[k] === v : DEFAULTS[k] === v) continue;
             if (/^(border-\w+-width)$/.test(k) && v === '0px') continue;
@@ -35,18 +59,18 @@ export function tokensOf(tree) {
         out.push({ kind: 'open', label, name: n.name ?? null, look, box: n.box, tag: n.tag });
         const inherit = { ...parentStyle, ...Object.fromEntries(Object.entries(n.style ?? {}).filter(([k]) => INHERITED.has(k))) };
         for (const child of n.children ?? []) visit(child, inherit);
-        out.push({ kind: 'close', box: n.box });
+        out.push({ kind: 'close', label: '', box: n.box });
     };
     visit(tree.root, {});
     return out;
 }
 
-const key = t => (t.kind === 'text' ? `t${t.label}` : t.kind === 'close' ? 'c' : `o${t.label}${t.look}`);
-const opens = k => k[0] === 'o';
-const closes = k => k === 'c';
+const key = (t: Token) => (t.kind === 'text' ? `t${t.label}` : t.kind === 'close' ? 'c' : `o${t.label}${t.look}`);
+const opens = (k: string) => k[0] === 'o';
+const closes = (k: string) => k === 'c';
 
 /** Longest-common-subsequence alignment as runs: { op: 'equal'|'insert'|'delete'|'replace', a0, a1, b0, b1 }. */
-export function align(a, b) {
+export function align(a: string[], b: string[]): Run[] {
     const n = a.length, m = b.length;
     // The common head and tail first: an edit is usually small next to a page.
     let head = 0;
@@ -57,8 +81,8 @@ export function align(a, b) {
     if (A.length * B.length > 4e7) throw new Error(`Too different to align (${A.length} × ${B.length} tokens): compare smaller pages, or the same page`);
     const dp = Array.from({ length: A.length + 1 }, () => new Uint32Array(B.length + 1));
     for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    const runs = [];
-    const push = (op, a0, a1, b0, b1) => {
+    const runs: Run[] = [];
+    const push = (op: Run['op'], a0: number, a1: number, b0: number, b1: number) => {
         const last = runs[runs.length - 1];
         if (last && last.op !== 'equal' && op !== 'equal' && last.a1 === a0 && last.b1 === b0) {
             last.a1 = a1; last.b1 = b1;
@@ -76,8 +100,8 @@ export function align(a, b) {
         else { push('delete', head + i, head + i + 1, head + j, head + j); i++; }
     }
     if (tail) push('equal', n - tail, n, m - tail, m);
-    const depthOf = seq => seq.reduce((d, x) => d + (opens(x) ? 1 : closes(x) ? -1 : 0), 0);
-    const whole = seq => {
+    const depthOf = (seq: string[]) => seq.reduce((d, x) => d + (opens(x) ? 1 : closes(x) ? -1 : 0), 0);
+    const whole = (seq: string[]) => {
         let d = 0;
         for (const x of seq) if ((d += opens(x) ? 1 : closes(x) ? -1 : 0) < 0) return false;
         return d === 0;
@@ -120,7 +144,7 @@ export function align(a, b) {
         const r = runs[k];
         if (r.op !== 'insert' && r.op !== 'delete') continue;
         const ins = r.op === 'insert';
-        const part = x => (ins ? b.slice(x.b0, x.b1) : a.slice(x.a0, x.a1));
+        const part = (x: Run) => (ins ? b.slice(x.b0, x.b1) : a.slice(x.a0, x.a1));
         let depth = depthOf(part(r));
         if (depth <= 0 || !part(r).every(opens)) continue;
         let end = -1;
@@ -147,12 +171,12 @@ export function align(a, b) {
 /** What a run holds, for a person: its components and texts in order, or "(layout only)". */
 // Components, and the elements a person acts on or sees as things (a button, a link, an image), name what a run holds.
 const THING = /^<(button|a|input|select|textarea|img|svg)>$/;
-const describe = toks => toks.filter(t => t.kind === 'text' || (t.kind === 'open' && (/^<[A-Z]/.test(t.label) || THING.test(t.label)))).map(t => (t.kind === 'text' ? `"${t.label}"` : t.label)).join(' ') || '(layout only)';
-const shape = toks => toks.filter(t => t.kind !== 'text').map(t => (t.kind === 'open' ? t.label.replace(/ .*/, '>') : '/')).join('');
+const describe = (toks: Token[]) => toks.filter(t => t.kind === 'text' || (t.kind === 'open' && (/^<[A-Z]/.test(t.label) || THING.test(t.label)))).map(t => (t.kind === 'text' ? `"${t.label}"` : t.label)).join(' ') || '(layout only)';
+const shape = (toks: Token[]) => toks.filter(t => t.kind !== 'text').map(t => (t.kind === 'open' ? t.label.replace(/ .*/, '>') : '/')).join('');
 
 /** Where token i is: the named elements it is in (the nearest three), and the text just before it inside the nearest. */
-function where(toks, i) {
-    const names = [];
+function where(toks: Token[], i: number) {
+    const names: string[] = [];
     let inner = -1;
     for (let k = i - 1, depth = 0; k >= 0 && names.length < 3; k--) {
         const t = toks[k];
@@ -172,8 +196,11 @@ function where(toks, i) {
  * Where each token sits in a <table>: per token, { table, col, name, heading } or undefined. A column's
  * name is its heading's text; a token that opens a cell, or is inside one, gets that cell's.
  */
-function tableCells(toks) {
-    const at = [], tables = [], open = [];
+interface Cell { table: number; col: number; heading: boolean; headings: string[]; name?: string }
+interface Table { id: number; col: number; headings: string[]; cell: { col: number; heading: boolean; depth: number } | null }
+
+function tableCells(toks: Token[]): (Cell | undefined)[] {
+    const at: (Cell | undefined)[] = [], tables: Table[] = [], open: (string | undefined)[] = [];
     let count = 0;
     toks.forEach((t, i) => {
         const table = tables[tables.length - 1];
@@ -195,14 +222,14 @@ function tableCells(toks) {
 }
 
 /** Tokens that differ only in how they look: what changed, attribute by attribute and style by style. */
-function restyled(was, now) {
+function restyled(was: Token[], now: Token[]): StyleChange[] | null {
     if (was.length !== now.length || was.some((t, i) => t.kind !== now[i].kind || t.label !== now[i].label)) return null;
-    const parts = [];
+    const parts: StyleChange[] = [];
     was.forEach((t, i) => {
         if (t.look === now[i].look) return;
-        const x = JSON.parse(t.look), y = JSON.parse(now[i].look);
+        const x = JSON.parse(t.look ?? '{}') as Record<'attrs' | 'style', Record<string, string>>, y = JSON.parse(now[i].look ?? '{}') as Record<'attrs' | 'style', Record<string, string>>;
         const who = t.name ?? t.label;
-        for (const group of ['attrs', 'style']) {
+        for (const group of ['attrs', 'style'] as const) {
             for (const k of new Set([...Object.keys(x[group]), ...Object.keys(y[group])])) {
                 if (x[group][k] !== y[group][k]) parts.push({ who, property: k, was: x[group][k] ?? null, now: y[group][k] ?? null });
             }
@@ -212,8 +239,8 @@ function restyled(was, now) {
 }
 
 /** The boxes of a run's outermost elements and texts (at most three), else of the element it is in. */
-function boxesOf(toks, a0, a1) {
-    const boxes = [];
+function boxesOf(toks: Token[], a0: number, a1: number): Box[] {
+    const boxes: Box[] = [];
     for (let k = a0, depth = 0; k < a1; k++) {
         const t = toks[k];
         if (t.kind === 'open' && depth++ === 0 && t.box[2] * t.box[3] > 0) boxes.push(t.box);
@@ -233,23 +260,23 @@ function boxesOf(toks, a0, a1) {
  * The changes from one page tree to another: [{ kind: 'added'|'removed'|'changed', where, inside,
  * now, was, styles?, count, boxes: { before, after } }], in page order.
  */
-export function diffTrees(before, after) {
+export function diffTrees(before: PageTree, after: PageTree): Change[] {
     const a = tokensOf(before), b = tokensOf(after);
     const cellsA = tableCells(a), cellsB = tableCells(b);
-    const groups = new Map();
+    const groups = new Map<string, Change & { styles: StyleChange[] }>();
     for (const r of align(a.map(key), b.map(key))) {
         if (r.op === 'equal') continue;
         const was = a.slice(r.a0, r.a1), now = b.slice(r.b0, r.b1);
-        const kind = { insert: 'added', delete: 'removed', replace: 'changed' }[r.op];
+        const kind = ({ insert: 'added', delete: 'removed', replace: 'changed' } as const)[r.op as 'insert' | 'delete' | 'replace'] satisfies ChangeKind;
         const at = now.length ? where(b, r.b0) : where(a, r.a0);
         // In a table, by column: a column added is its heading and a cell in every row, one change.
-        const [cells, seq, s0] = now.length ? [cellsB, now, r.b0] : [cellsA, was, r.a0];
+        const [cells, seq, s0] = now.length ? [cellsB, now, r.b0] as const : [cellsA, was, r.a0] as const;
         const first = Math.max(0, seq.findIndex(t => t.kind === 'open'));
         const col = cells[s0 + first] ?? cells[s0 + first + 1];
         const place = col ? `${col.heading ? 'heading of' : 'in'} column "${col.name}"${col.col > 0 ? ` (after "${col.headings[col.col - 1] ?? `#${col.col}`}")` : ''}` : null;
         const g = col ? `${kind}|table${col.table}|${col.name}` : `${kind}|${at.region}|${shape(was)}|${shape(now)}`;
         if (!groups.has(g)) groups.set(g, { kind, where: place ? `${at.region ? `in ${at.region}, ` : ''}${place}` : kind === 'changed' ? at.text.replace(/, at its start$/, '') : at.text, inside: at.inside, now: [], was: [], styles: [], count: 0, boxes: { before: [], after: [] } });
-        const entry = groups.get(g);
+        const entry = groups.get(g)!;
         entry.count++;
         const styles = kind === 'changed' ? restyled(was, now) : null;
         if (styles) {
@@ -268,7 +295,7 @@ export function diffTrees(before, after) {
 }
 
 /** The change list as text, one numbered entry per change. */
-export function formatChanges(list) {
+export function formatChanges(list: Change[]): string {
     if (!list.length) return 'no changes';
     return list
         .map((c, i) => {

@@ -1,19 +1,21 @@
 // A page tree as a short outline an AI agent (or a person) can read: components, the elements a
 // person acts on, landmarks and text, indented by how they nest. Wrappers with nothing to say are
 // skipped, so a deep page is a few dozen lines.
+import type { PageTree, TreeNode } from './types.js';
+
 const THING = /^(button|a|input|select|textarea|img|svg|h[1-6]|label|nav|header|footer|main|aside|form|table|tr|dialog|section|li)$/;
 
-const props = p => Object.entries(p ?? {}).map(([k, v]) => ` ${k}=${JSON.stringify(v)}`).join('');
+const props = (p?: Record<string, unknown>) => Object.entries(p ?? {}).map(([k, v]) => ` ${k}=${JSON.stringify(v)}`).join('');
 
 /** The outline as text, at most `max` lines. */
-export function outline(tree, { max = 200 } = {}) {
-    const lines = [];
+export function outline(tree: PageTree, { max = 200 } = {}): string {
+    const lines: string[] = [];
     let cut = false;
-    const visit = (n, depth) => {
+    const visit = (n: TreeNode, depth: number): void => {
         if (lines.length >= max) { cut = true; return; }
         if ('text' in n) { lines.push(`${'  '.repeat(depth)}"${n.text.length > 120 ? `${n.text.slice(0, 120)}…` : n.text}"`); return; }
         const attrs = n.attrs ?? {};
-        let label = null;
+        let label: string | null = null;
         if (n.component) label = `<${n.component.name}${props(n.component.props)}>`;
         else if (THING.test(n.tag) || attrs.role || attrs['aria-label']) {
             const extra = ['href', 'placeholder', 'value', 'role', 'aria-label', 'alt', 'type'].filter(k => attrs[k] && !(k === 'type' && n.tag !== 'input')).map(k => ` ${k}=${JSON.stringify(attrs[k].length > 60 ? `${attrs[k].slice(0, 60)}…` : attrs[k])}`).join('');

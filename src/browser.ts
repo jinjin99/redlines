@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export async function launch() {
-    let chromium;
+import type { Browser, BrowserType } from 'playwright-core';
+
+export async function launch(): Promise<Browser> {
+    let chromium: BrowserType;
     try {
         ({ chromium } = await import('playwright-core'));
     } catch {
@@ -15,6 +17,7 @@ export async function launch() {
     try {
         return await chromium.launch();
     } catch (error) {
+        const message = (error as Error).message;
         const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || (process.platform === 'darwin' ? path.join(os.homedir(), 'Library/Caches/ms-playwright') : process.platform === 'win32' ? path.join(os.homedir(), 'AppData/Local/ms-playwright') : path.join(os.homedir(), '.cache/ms-playwright'));
         const builds = fs.existsSync(cache) ? fs.readdirSync(cache).filter(d => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.slice(9)) - Number(a.slice(9))) : [];
         const apps = [
@@ -27,6 +30,6 @@ export async function launch() {
             'chrome-win/chrome.exe',
         ];
         for (const b of builds) for (const a of apps) if (fs.existsSync(path.join(cache, b, a))) return chromium.launch({ executablePath: path.join(cache, b, a) });
-        throw new Error(`No Chromium to run (${error.message.split('\n')[0]}).\nInstall one: npx playwright-core install chromium, or set REDLINES_CHROME to a Chrome executable.`);
+        throw new Error(`No Chromium to run (${message.split('\n')[0]}).\nInstall one: npx playwright-core install chromium, or set REDLINES_CHROME to a Chrome executable.`);
     }
 }

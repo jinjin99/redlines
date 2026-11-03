@@ -141,6 +141,18 @@ Early. What works today: shooting states of any web app with Playwright, mocked 
 - Reusing the mocks an app already has (MSW handlers).
 - Presets for component libraries, to name changes in their terms.
 
+## Developing
+
+redlines is written in TypeScript (`src/`, `bin/`), built with `tsc` into `dist/`.
+
+```bash
+npm install
+npm test        # builds, then runs the tests (they drive a real Chromium)
+npm run demo    # the example app, captured before and after, into .redlines/demo/
+```
+
+`src/page/` holds the functions that run inside the page (Playwright sends their source there), so they import nothing at run time and must stay self-contained.
+
 ## License
 
 MIT

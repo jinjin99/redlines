@@ -8,7 +8,13 @@
 //   page:  { version: 1, url, title, viewport: { width, height }, size: { width, height }, root }
 //   element: { tag, name?, component?: { name, props }, classes?, attrs?, style, box: [x, y, w, h], children }
 //   text:  { text, box }
-export function snapshot(opts = {}) {
+// (The types are src/types.ts: PageTree, TreeElement, TreeText.)
+import type { Box, PageTree, TreeElement, TreeNode } from '../types.js';
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- React's fibers are its internals, read as they are. */
+type Fiber = any;
+
+export function snapshot(opts: { styleKeys?: string[]; ignore?: string | null } = {}): PageTree {
     const STYLE = opts.styleKeys || [
         'display', 'color', 'background-color', 'background-image', 'font-family', 'font-size', 'font-weight', 'font-style',
         'line-height', 'letter-spacing', 'text-align', 'text-decoration-line', 'text-transform',
@@ -21,22 +27,22 @@ export function snapshot(opts = {}) {
     const ATTRS = ['href', 'src', 'alt', 'title', 'placeholder', 'role', 'aria-label', 'type', 'name', 'value', 'checked', 'disabled'];
     const SKIP = /^(script|style|link|meta|noscript|template|head)$/i;
     const LANDMARK = /^(nav|header|footer|main|aside|form|table|dialog|section|article)$/;
-    const ignore = opts.ignore ? document.querySelectorAll(opts.ignore) : [];
-    const ignored = new Set(ignore);
+    const ignored = new Set<Element>(opts.ignore ? Array.from(document.querySelectorAll(opts.ignore)) : []);
     const sx = window.scrollX, sy = window.scrollY;
-    const boxOf = r => [Math.round(r.left + sx), Math.round(r.top + sy), Math.round(r.width), Math.round(r.height)];
+    const boxOf = (r: DOMRect): Box => [Math.round(r.left + sx), Math.round(r.top + sy), Math.round(r.width), Math.round(r.height)];
 
     // A class a person can read (card, MuiButton-root, nav__item), not a build's hash (css-1x2y3z, _a8f3k).
-    const readable = c => c.length <= 48 && /^[A-Za-z][A-Za-z-_]*[A-Za-z]$/.test(c) && /[aeiou]/i.test(c) && !/^(css|sc|jsx|emotion)-/.test(c);
+    const readable = (c: string) => c.length <= 48 && /^[A-Za-z][A-Za-z-_]*[A-Za-z]$/.test(c) && /[aeiou]/i.test(c) && !/^(css|sc|jsx|emotion)-/.test(c);
 
     // React, when the page uses it: the component whose whole output an element is.
-    const fiberKey = el => Object.keys(el).find(k => k.startsWith('__reactFiber$'));
-    const current = new Set();
+    const fiberKey = (el: Element) => Object.keys(el).find(k => k.startsWith('__reactFiber$'));
+    const current = new Set<Fiber>();
     (function collect() {
-        const roots = [document.body, ...document.body.querySelectorAll(':scope > *, :scope > * > *')];
+        const roots: Element[] = [document.body, ...Array.from(document.body.querySelectorAll(':scope > *, :scope > * > *'))];
         for (const el of roots) {
             const k = Object.keys(el).find(x => x.startsWith('__reactContainer$'));
-            const root = k && el[k] && el[k].stateNode && el[k].stateNode.current;
+            const container = k ? (el as any)[k] : null;
+            const root = container && container.stateNode && container.stateNode.current;
             if (!root) continue;
             const stack = [root];
             while (stack.length) {
@@ -48,13 +54,13 @@ export function snapshot(opts = {}) {
         }
     })();
     // React keeps two copies of each fiber; the one on screen is in the tree under the root's `current`.
-    const live = f => (f && !current.has(f) && f.alternate && current.has(f.alternate) ? f.alternate : f);
-    const nameOfType = t => {
+    const live = (f: Fiber): Fiber => (f && !current.has(f) && f.alternate && current.has(f.alternate) ? f.alternate : f);
+    const nameOfType = (t: any): string | null => {
         if (!t || typeof t === 'string') return null;
         return t.displayName || t.name || (t.render && (t.render.displayName || t.render.name)) || (t.type && nameOfType(t.type)) || null;
     };
-    const goodName = n => n && /^[A-Z][A-Za-z0-9]+$/.test(n) && !/(Provider|Consumer|Context|Boundary|Suspense|Fragment|Router|Route|Switch|Portal)$/.test(n);
-    const hostRoots = (f, acc) => {
+    const goodName = (n: string | null): n is string => !!n && /^[A-Z][A-Za-z0-9]+$/.test(n) && !/(Provider|Consumer|Context|Boundary|Suspense|Fragment|Router|Route|Switch|Portal)$/.test(n);
+    const hostRoots = (f: Fiber, acc: Fiber[]): Fiber[] => {
         for (let c = f.child; c; c = c.sibling) {
             if (c.tag === 5 || c.tag === 6) acc.push(c);
             else if (c.tag !== 4) hostRoots(c, acc);
@@ -62,24 +68,25 @@ export function snapshot(opts = {}) {
         }
         return acc;
     };
-    const plainProps = props => {
-        const out = {};
+    const plainProps = (props: Record<string, unknown> | null) => {
+        const out: Record<string, string | number | boolean> = {};
         let n = 0;
-        for (const k of Object.keys(props || {})) {
-            const v = props[k];
+        const all = props ?? {};
+        for (const k of Object.keys(all)) {
+            const v = all[k];
             if (k === 'children' || k === 'key' || k === 'ref' || k === 'className' || k === 'style' || k === 'id' || /^(on[A-Z]|data-|aria-)/.test(k)) continue;
             if (typeof v === 'string' ? v.length <= 80 : typeof v === 'number' || typeof v === 'boolean') {
-                out[k] = v;
+                out[k] = v as string | number | boolean;
                 if (++n >= 8) break;
             }
         }
         return out;
     };
-    const componentOf = el => {
+    const componentOf = (el: Element): TreeElement['component'] | null => {
         const k = fiberKey(el);
-        const f = k && live(el[k]);
+        const f = k && live((el as any)[k]);
         if (!f) return null;
-        let best = null;
+        let best: TreeElement['component'] | null = null;
         for (let p = live(f.return); p && p.tag !== 5 && p.tag !== 3 && p.tag !== 4; p = live(p.return)) {
             const roots = hostRoots(p, []);
             if (roots.length !== 1 || roots[0] !== f) break;
@@ -89,13 +96,13 @@ export function snapshot(opts = {}) {
         return best;
     };
 
-    const unseen = (el, cs, r) =>
+    const unseen = (cs: CSSStyleDeclaration, r: DOMRect) =>
         cs.visibility !== 'visible' || cs.opacity === '0' ||
         ((cs.position === 'absolute' || cs.position === 'fixed') && (r.width * r.height <= 1 || cs.clip !== 'auto' || r.right <= 0 || r.bottom <= 0));
 
-    const walk = n => {
+    const walk = (n: Node): TreeNode | null => {
         if (n.nodeType === 3) {
-            const text = n.nodeValue.replace(/\s+/g, ' ').trim();
+            const text = (n.nodeValue ?? '').replace(/\s+/g, ' ').trim();
             if (!text) return null;
             const range = document.createRange();
             range.selectNodeContents(n);
@@ -103,22 +110,24 @@ export function snapshot(opts = {}) {
             if (r.width === 0 && r.height === 0) return null;
             return { text, box: boxOf(r) };
         }
-        if (n.nodeType !== 1 || SKIP.test(n.tagName) || ignored.has(n)) return null;
-        const cs = getComputedStyle(n);
+        if (n.nodeType !== 1) return null;
+        const e = n as HTMLElement;
+        if (SKIP.test(e.tagName) || ignored.has(e)) return null;
+        const cs = getComputedStyle(e);
         if (cs.display === 'none') return null;
-        const r = n.getBoundingClientRect();
-        if (unseen(n, cs, r) && !n.querySelector('[style*="visibility: visible"]')) return null;
-        const tag = n.tagName.toLowerCase();
-        const node = { tag };
-        const component = componentOf(n);
+        const r = e.getBoundingClientRect();
+        if (unseen(cs, r) && !e.querySelector('[style*="visibility: visible"]')) return null;
+        const tag = e.tagName.toLowerCase();
+        const node: TreeElement = { tag, style: {}, box: [0, 0, 0, 0] };
+        const component = componentOf(e);
         if (component) node.component = component;
-        const classes = [...n.classList].filter(readable);
+        const classes = Array.from(e.classList).filter(readable);
         if (classes.length) node.classes = classes;
-        const attrs = {};
+        const attrs: Record<string, string> = {};
         for (const a of ATTRS) {
-            if (a === 'value' && 'value' in n && (tag === 'input' || tag === 'textarea' || tag === 'select')) { if (n.value) attrs.value = String(n.value); continue; }
-            if (a === 'checked' && tag === 'input') { if (n.checked) attrs.checked = 'true'; continue; }
-            const v = n.getAttribute(a);
+            if (a === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select')) { const v = (e as HTMLInputElement).value; if (v) attrs.value = String(v); continue; }
+            if (a === 'checked' && tag === 'input') { if ((e as HTMLInputElement).checked) attrs.checked = 'true'; continue; }
+            const v = e.getAttribute(a);
             if (v != null) attrs[a] = a === 'src' && v.startsWith('data:') ? `data:${v.length}:${v.slice(-24)}` : v;
         }
         if (Object.keys(attrs).length) node.attrs = attrs;
@@ -127,8 +136,8 @@ export function snapshot(opts = {}) {
         node.style = {};
         for (const k of STYLE) node.style[k] = cs.getPropertyValue(k);
         node.box = boxOf(r);
-        const kids = [];
-        const childNodes = n.shadowRoot ? [...n.shadowRoot.childNodes, ...n.childNodes] : n.childNodes;
+        const kids: TreeNode[] = [];
+        const childNodes = e.shadowRoot ? [...Array.from(e.shadowRoot.childNodes), ...Array.from(e.childNodes)] : Array.from(e.childNodes);
         for (const c of childNodes) {
             const k = walk(c);
             if (k) kids.push(k);
@@ -137,7 +146,7 @@ export function snapshot(opts = {}) {
         return node;
     };
 
-    const root = walk(document.body) || { tag: 'body', style: {}, box: [0, 0, 0, 0] };
+    const root = (walk(document.body) as TreeElement | null) ?? { tag: 'body', style: {}, box: [0, 0, 0, 0] };
     return {
         version: 1,
         url: location.href,

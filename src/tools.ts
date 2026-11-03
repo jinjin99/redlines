@@ -11,6 +11,21 @@ import { exportDesign } from './export.js';
 import { outline } from './outline.js';
 import { findChanges, writeReport } from './report.js';
 
+/** What a tool gives back: text, a screenshot for view_page, and whether it failed part way. */
+export interface ToolResult { text: string; image?: Buffer; isError?: boolean }
+
+export interface ToolContext { root: string; log?: (line: string) => void }
+
+export interface Tool {
+    name: string;
+    title: string;
+    description: string;
+    input: z.ZodRawShape;
+    annotations?: { readOnlyHint?: boolean; openWorldHint?: boolean };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each tool's args are its own input, checked by zod before run.
+    run(args: any, context: ToolContext): Promise<ToolResult>;
+}
+
 export const INSTRUCTIONS = `redlines shows what a UI change does to the pages, state by state.
 
 Use it whenever you change UI code:
@@ -24,8 +39,9 @@ Use it whenever you change UI code:
 Folders default to .redlines/ in the project. Paths must stay inside the project.`;
 
 /** A path inside the project (relative paths are from the project); anything else is refused. */
-export function inProject(root, p, fallback) {
-    const full = path.resolve(root, p ?? fallback);
+export function inProject(root: string, p?: string, fallback?: string): string {
+    if (p === undefined && fallback === undefined) throw new Error('A path is needed');
+    const full = path.resolve(root, (p ?? fallback)!);
     if (full !== root && !full.startsWith(root + path.sep)) throw new Error(`${p} is outside the project (${root})`);
     return full;
 }
@@ -56,7 +72,7 @@ const CONFIG_EXAMPLE = `export default {
  * Each tool: { name, title, description, input (zod shape), annotations, run(args, { root }) }. `run`
  * returns { text, image?: PNG buffer, isError? } and throws on bad input or a failure.
  */
-export const TOOLS = [
+export const TOOLS: Tool[] = [
     {
         name: 'view_page',
         title: 'View a page',
@@ -86,7 +102,7 @@ export const TOOLS = [
             try {
                 config = await loadConfig(file ? inProject(root, file) : undefined, root);
             } catch (e) {
-                if (!/No config/.test(e.message)) throw e;
+                if (!/No config/.test((e as Error).message)) throw e;
                 return { text: `No redlines config in ${root}. Write redlines.config.mjs there, for example:\n\n${CONFIG_EXAMPLE}\n\nState names are letters, digits, - and _. Steps: click, fill [selector, text], press, hover, select [selector, value], waitFor, wait (ms). List every screen and state the change touches, including dialogs and empty or error states.` };
             }
             const states = Object.entries(config.states).map(([name, s]) => `  ${name}: ${s.title ?? name} — ${s.path ?? '/'}${s.steps?.length ? `, ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}${s.mocks ? `, mocks ${Object.keys(s.mocks).join(', ')}` : ''}`);

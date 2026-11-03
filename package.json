@@ -4,20 +4,25 @@
   "description": "See what a UI change does, state by state: before and after of every page, each change found, boxed and numbered.",
   "type": "module",
   "bin": {
-    "redlines": "bin/redlines.js"
+    "redlines": "dist/bin/redlines.js"
   },
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
   },
   "files": [
-    "bin",
-    "src",
+    "dist/src",
+    "dist/bin",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "demo": "node scripts/demo.js"
+    "build": "tsc",
+    "test": "tsc && node --test dist/test/*.test.js",
+    "demo": "tsc && node dist/scripts/demo.js",
+    "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
     "node": ">=18.17"
@@ -37,7 +42,10 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "20.19.43",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  }
+    "react-dom": "^18.3.1",
+    "typescript": "6.0.3"
+  },
+  "types": "dist/src/index.d.ts"
 }
