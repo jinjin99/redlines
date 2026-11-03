@@ -63,6 +63,27 @@ The report is a folder of static files: open it locally, or put it on any static
 | `redlines report <before> <after> --out <dir> [--title <text>]` | The review page: `index.html`, the screenshots, and `changes.json`. |
 | `redlines export <shots> --out <dir> [--format html\|dc] [--title <text>]` | The states as editable design files. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. |
 
+## For coding agents (MCP)
+
+redlines is also an MCP server, so an agent that changes UI code can look at what it did and show people the change:
+
+```bash
+claude mcp add redlines -- npx redlines mcp     # Claude Code; other MCP clients: command "npx", args ["redlines", "mcp"]
+```
+
+Run it from the project folder: every path the tools read or write stays inside it (`REDLINES_ROOT` sets another).
+
+| Tool | What it does |
+| --- | --- |
+| `look` | Opens a page of the running app (steps and mocks optional) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing. |
+| `config` | The project's states (`redlines.config.*`), or how to write the config. |
+| `shoot` | One version of the app, every state, into a folder. |
+| `compare` | The changes between two shot folders. |
+| `report` | The review page for two shot folders. |
+| `export` | Editable design files of a shot folder (Claude Design canvas or HTML). |
+
+The server tells the agent when to use them: `look` at every page it changed before saying it is done; to show a change, shoot the app before (main branch) and after (its working copy), compare, and hand over the report.
+
 ## Config
 
 | Key | |
@@ -118,13 +139,12 @@ Each tree is read into a sequence (an element opening, its text, its closing), t
 
 ## Status
 
-Early. What works today: shooting states of any web app with Playwright, mocked APIs, React component names and props, the change list, the review page, and editable exports (HTML, Claude Design). Planned:
+Early. What works today: shooting states of any web app with Playwright, mocked APIs, React component names and props, the change list, the review page, editable exports (HTML, Claude Design), and an MCP server for coding agents. Planned:
 
 - More export targets for the editable states (Figma).
 - A GitHub Action that shoots both sides of a PR and comments with the review page.
 - Reusing the mocks an app already has (MSW handlers).
 - Presets for component libraries, to name changes in their terms.
-- An MCP server, so coding agents can show what they changed.
 
 ## License
 

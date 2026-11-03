@@ -18,6 +18,8 @@ const HELP = `redlines — see what a UI change does, state by state
       a review page: before and after side by side, each change boxed and numbered
   redlines export <shots> --out <dir> [--format html|dc] [--title <text>]
       the states as editable design files: standalone HTML, or a Claude Design canvas (dc)
+  redlines mcp
+      an MCP server on stdio, for coding agents: claude mcp add redlines -- npx redlines mcp
 `;
 
 const [command, ...rest] = process.argv.slice(2);
@@ -68,6 +70,11 @@ async function main() {
             if (args.length !== 1 || !flags.out) throw new Error('export <shots> --out <dir> [--format html|dc]');
             const { files, notes } = exportStates(args[0], path.resolve(flags.out), { format: flags.format ?? 'html', title: flags.title });
             console.log(`${files.length} file${files.length === 1 ? '' : 's'} in ${path.resolve(flags.out)}:\n  ${files.join('\n  ')}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}`);
+            return;
+        }
+        case 'mcp': {
+            const { serveStdio } = await import('../src/mcp.js');
+            await serveStdio();
             return;
         }
         default:

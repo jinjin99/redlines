@@ -67,6 +67,52 @@ export async function pixelDiff(page, a, b) {
 // Still pictures: no animation, transition or blinking caret between two shots.
 const STILL = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}';
 
+/**
+ * A state opened in `browser`, ready to record: a context with its viewport, the mocks answering,
+ * the page loaded, its steps done, settled. Returns { context, page, errors }; close the context after.
+ */
+export async function openState(browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, locale = 'en-US', timezone = 'UTC' }) {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
+    const table = Object.entries(mocks).map(([p, answer]) => [matcher(p), answer]);
+    if (table.length) {
+        await page.route('**/*', route => {
+            const hit = table.find(([test]) => test(route.request()));
+            return hit ? fulfill(route, hit[1]) : route.fallback();
+        });
+    }
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        await page.addStyleTag({ content: STILL });
+        for (const s of steps) await step(page, s);
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.evaluate(() => document.fonts?.ready);
+        await page.waitForTimeout(settle);
+    } catch (error) {
+        await context.close();
+        throw error;
+    }
+    return { context, page, errors };
+}
+
+/** One page as it is now: { tree, screenshot (PNG buffer), errors }, without writing anything. */
+export async function look({ url, steps, mocks, viewport, settle, fullPage = false }) {
+    const browser = await launch();
+    try {
+        const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle });
+        try {
+            const tree = await page.evaluate(snapshot, {});
+            return { tree, screenshot: await page.screenshot({ fullPage }), errors };
+        } finally {
+            await context.close();
+        }
+    } finally {
+        await browser.close();
+    }
+}
+
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
 export async function shoot({ config, base, out, only, log = console.log }) {
     const baseURL = base ?? config.baseURL;
@@ -79,25 +125,24 @@ export async function shoot({ config, base, out, only, log = console.log }) {
     try {
         for (const name of names) {
             const state = config.states[name];
-            const viewport = state.viewport ?? config.viewport ?? { width: 1280, height: 800 };
-            const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale: config.locale ?? 'en-US', timezoneId: config.timezone ?? 'UTC' });
-            const page = await context.newPage();
-            const errors = [];
-            page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
-            const mocks = Object.entries({ ...(config.mocks ?? {}), ...(state.mocks ?? {}) }).map(([p, answer]) => [matcher(p), answer]);
-            if (mocks.length) {
-                await page.route('**/*', route => {
-                    const hit = mocks.find(([test]) => test(route.request()));
-                    return hit ? fulfill(route, hit[1]) : route.fallback();
-                });
-            }
+            let opened;
             try {
-                await page.goto(new URL(state.path ?? '/', baseURL).href, { waitUntil: 'load' });
-                await page.addStyleTag({ content: STILL });
-                for (const s of state.steps ?? []) await step(page, s);
-                await page.waitForLoadState('networkidle').catch(() => {});
-                await page.evaluate(() => document.fonts?.ready);
-                await page.waitForTimeout(state.settle ?? config.settle ?? 300);
+                opened = await openState(browser, {
+                    url: new URL(state.path ?? '/', baseURL).href,
+                    steps: state.steps,
+                    mocks: { ...(config.mocks ?? {}), ...(state.mocks ?? {}) },
+                    viewport: state.viewport ?? config.viewport,
+                    settle: state.settle ?? config.settle,
+                    locale: config.locale,
+                    timezone: config.timezone,
+                });
+            } catch (error) {
+                results.push({ name, ok: false, error: error.message.split('\n')[0] });
+                log(`FAIL ${name}: ${error.message.split('\n')[0]}`);
+                continue;
+            }
+            const { context, page, errors } = opened;
+            try {
                 const tree = await page.evaluate(snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
