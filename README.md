@@ -12,6 +12,10 @@ redlines opens your running app in each state you care about (a page, a dialog o
 3. changed ×2 in page › card › table, in column "Status" (after "Customer"): "Paid": background-color rgb(205, 236, 205) → rgb(183, 228, 183), font-weight (none) → 600
 ```
 
+![The review page: the order list before and after, each change boxed and numbered, and the list of changes](docs/report.png)
+
+Try it on the example app in this repo: `npm install && npm run demo` (it writes `.redlines/demo/`).
+
 It is not pixel diffing. redlines reads the rendered page: elements, text, the styles that make them look the way they do, and in React apps the component each element comes from and its props (`<Badge tone="success">`). So it can tell you *what* changed and *where*, in words, and ignore what moved only because something above it grew.
 
 ## Quick start
