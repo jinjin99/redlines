@@ -80,6 +80,8 @@ export interface StateConfig {
     mocks?: Record<string, MockAnswer>;
     viewport?: { width: number; height: number };
     settle?: number;
+    /** How long each step waits for what it acts on (ms), default 5000. */
+    stepTimeout?: number;
     ignore?: string;
 }
 
@@ -89,6 +91,7 @@ export interface Config {
     mocks?: Record<string, MockAnswer>;
     states: Record<string, StateConfig>;
     settle?: number;
+    stepTimeout?: number;
     ignore?: string;
     locale?: string;
     timezone?: string;

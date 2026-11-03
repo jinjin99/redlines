@@ -8,7 +8,9 @@
   .page { max-width: 960px; margin: 0 auto; padding: 24px; }
   .page-header { display: flex; justify-content: space-between; align-items: center; }
   h1 { margin: 0; font-size: 22px; }
-  .card { background: #fff; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  /* A shorthand with var(): the browser can't read its longhands back (padding-bottom comes out empty). */
+  .page { --pad: 16px; --pad-end: 24px; }
+  .card { background: #fff; border-radius: 8px; padding: var(--pad) var(--pad) var(--pad-end); margin-top: 16px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
   .badge { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; background: #e3e3e3; }

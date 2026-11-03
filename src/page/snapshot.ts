@@ -59,7 +59,12 @@ export function snapshot(opts: { styleKeys?: string[]; ignore?: string | null } 
         if (!t || typeof t === 'string') return null;
         return t.displayName || t.name || (t.render && (t.render.displayName || t.render.name)) || (t.type && nameOfType(t.type)) || null;
     };
-    const goodName = (n: string | null): n is string => !!n && /^[A-Z][A-Za-z0-9]+$/.test(n) && !/(Provider|Consumer|Context|Boundary|Suspense|Fragment|Router|Route|Switch|Portal)$/.test(n);
+    // A production build renames components to two or three characters (Sa, Jye, NEe), differently
+    // from one build to the next: such a name says nothing and would make every build look changed.
+    // Short names that are words a component is called stay.
+    const SHORT = new Set(['Box', 'Tag', 'App', 'Nav', 'Row', 'Col', 'Tab', 'Map', 'Bar', 'Pin', 'Dot', 'Fab', 'Img', 'Svg', 'Key']);
+    const goodName = (n: string | null): n is string =>
+        !!n && /^[A-Z][A-Za-z0-9]+$/.test(n) && (n.length > 3 || SHORT.has(n)) && !/(Provider|Consumer|Context|Boundary|Suspense|Fragment|Router|Route|Switch|Portal)$/.test(n);
     const hostRoots = (f: Fiber, acc: Fiber[]): Fiber[] => {
         for (let c = f.child; c; c = c.sibling) {
             if (c.tag === 5 || c.tag === 6) acc.push(c);

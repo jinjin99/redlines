@@ -82,11 +82,16 @@ export interface OpenOptions {
     mocks?: Record<string, MockAnswer>;
     viewport?: { width: number; height: number };
     settle?: number;
+    /** How long a step waits for what it acts on (ms). */
+    stepTimeout?: number;
     locale?: string;
     timezone?: string;
 }
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, locale = 'en-US', timezone = 'UTC' }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+/** A step as the config says it, for an error message. */
+const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
+
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC' }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone });
     const page = await context.newPage();
     const errors: string[] = [];
@@ -101,7 +106,17 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
     try {
         await page.goto(url, { waitUntil: 'load' });
         await page.addStyleTag({ content: STILL });
-        for (const s of steps) await step(page, s);
+        page.setDefaultTimeout(stepTimeout);
+        for (const [i, s] of steps.entries()) {
+            try {
+                await step(page, s);
+            } catch (error) {
+                const why = (error as Error).message.split('\n')[0].replace(/^\w+\.\w+: /, '');
+                throw new Error(`step ${i + 1} of ${steps.length}, ${stepText(s)}: ${/Timeout/.test(why) ? `nothing on the page matched within ${stepTimeout} ms` : why}`);
+            }
+        }
+        // Steps are quick to give up; recording a big page is not hurried.
+        page.setDefaultTimeout(30000);
         await page.waitForLoadState('networkidle').catch(() => {});
         await page.evaluate(() => document.fonts?.ready);
         await page.waitForTimeout(settle);
@@ -150,6 +165,7 @@ export async function captureStates({ config, base, out, only, log = console.log
                     mocks: { ...(config.mocks ?? {}), ...(state.mocks ?? {}) },
                     viewport: state.viewport ?? config.viewport,
                     settle: state.settle ?? config.settle,
+                    stepTimeout: state.stepTimeout ?? config.stepTimeout,
                     locale: config.locale,
                     timezone: config.timezone,
                 });

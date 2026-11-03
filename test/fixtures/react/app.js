@@ -3,6 +3,8 @@
     var h = React.createElement;
     function Badge(props) { return h('span', { className: 'badge badge-' + props.tone }, props.children); }
     function Button(props) { return h('button', { className: 'button' + (props.primary ? ' button-primary' : ''), onClick: props.onClick }, props.children); }
+    // What a production build makes of a component's name: two letters, different every build.
+    function Xq(props) { return h('div', { className: 'actions' }, props.children); }
     function Card(props) { return h('section', { className: 'card' }, h('h2', null, props.title), props.children); }
     function App() {
         var after = window.VERSION === 'after';
@@ -10,7 +12,7 @@
             h(Card, { title: 'Subscription' },
                 h('p', null, 'Plan: Pro'),
                 h(Badge, { tone: after ? 'success' : 'info' }, after ? 'Active' : 'Trial'),
-                h('div', { className: 'actions' },
+                h(Xq, null,
                     h(Button, { primary: true }, 'Upgrade'),
                     after ? h(Button, null, 'Cancel plan') : null)));
     }

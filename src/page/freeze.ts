@@ -6,13 +6,36 @@ export async function freeze(): Promise<string> {
     const abs = (u: string) => { try { return new URL(u, document.baseURI).href; } catch { return u; } };
     const fixUrls = (css: string, base: string) => css.replace(/url\(\s*(['"]?)(?!data:|#)([^'")]+)\1\s*\)/g, (m: string, _q: string, u: string) => { try { return `url("${new URL(u, base).href}")`; } catch { return m; } });
 
+    // A stylesheet as written where it can be had: the browser's own serialization (cssRules) loses
+    // the longhands of a shorthand that uses var() (`padding: 0 var(--x)` reads back as `padding-bottom: ;`).
+    // So: a <style> element's text, a same-origin sheet fetched again; the rules only for what has no
+    // text (rules a CSS-in-JS library inserted), and a link for a cross-origin sheet that can't be read.
     const css: string[] = [], links: string[] = [];
     const sheetText = (sheet: CSSStyleSheet) => {
         try { return fixUrls(Array.from(sheet.cssRules).map(r => r.cssText).join('\n'), sheet.href || document.baseURI); } catch { return null; }
     };
+    const inMedia = (sheet: CSSStyleSheet, text: string) => (sheet.media?.mediaText && sheet.media.mediaText !== 'all' ? `@media ${sheet.media.mediaText} {\n${text}\n}` : text);
+    const sourceOf = async (sheet: CSSStyleSheet): Promise<string | null> => {
+        const owner = sheet.ownerNode;
+        if (owner instanceof HTMLStyleElement) {
+            const text = owner.textContent ?? '';
+            // Rules inserted by script leave the element's text short of them.
+            let rules = 0;
+            try { rules = sheet.cssRules.length; } catch {}
+            if (text.trim() && (rules === 0 || (text.match(/\{/g) ?? []).length >= rules)) return fixUrls(text, document.baseURI);
+            return null;
+        }
+        if (sheet.href && new URL(sheet.href).origin === location.origin) {
+            try {
+                const res = await fetch(sheet.href);
+                if (res.ok) return fixUrls(await res.text(), sheet.href);
+            } catch {}
+        }
+        return null;
+    };
     for (const sheet of Array.from(document.styleSheets)) {
-        const text = sheetText(sheet);
-        if (text !== null) css.push(text);
+        const text = (await sourceOf(sheet)) ?? sheetText(sheet);
+        if (text !== null) css.push(inMedia(sheet, text));
         else if (sheet.href) links.push(sheet.href); // cross-origin: not readable, linked instead
     }
     for (const sheet of document.adoptedStyleSheets || []) { const text = sheetText(sheet); if (text) css.push(text); }

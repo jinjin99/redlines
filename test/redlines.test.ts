@@ -103,14 +103,18 @@ test('React: components are named, with their props', async () => {
     fs.copyFileSync(path.join(FIXTURES, '../../node_modules/react-dom/umd/react-dom.production.min.js'), path.join(dir, 'react-dom.js'));
     const server = await serve(dir);
     try {
-        const config: Config = { file: 'inline', states: { before: { path: '/before.html' }, after: { path: '/after.html' } } };
-        await captureStates({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
+        const config: Config = { file: 'inline', states: { before: { path: '/before.html' }, after: { path: '/after.html' }, missing: { path: '/after.html', steps: [{ click: 'text=Upgrade' }, { click: 'text=No such button' }], stepTimeout: 500 } } };
+        const results = await captureStates({ config, base: server.base, out: path.join(dir, 'shots'), log: () => {} });
+        // A step that finds nothing says which step, and gives up quickly.
+        assert.equal(results.find(r => r.name === 'missing')?.error, 'step 2 of 2, {"click":"text=No such button"}: nothing on the page matched within 500 ms');
     } finally { server.close(); }
     const read = (n: string) => JSON.parse(fs.readFileSync(path.join(dir, 'shots', `${n}.json`), 'utf8')) as PageTree;
     const text = formatChanges(diffTrees(read('before'), read('after')));
     assert.match(text, /<Badge tone="success"> "Active"/);
     assert.match(text, /was: <Badge tone="info"> "Trial"/);
     assert.match(text, /added in App › Card › actions, after "Upgrade": <Button> "Cancel plan"/);
+    // A minified component name (Xq) is no name: it neither shows nor makes builds differ.
+    assert.doesNotMatch(text, /Xq/);
 });
 
 test('shoot: each state frozen as standalone HTML that renders like the page', async () => {
