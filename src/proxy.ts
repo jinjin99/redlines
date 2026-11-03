@@ -20,6 +20,8 @@ export type ProxyMode = 'record' | 'replay';
 interface ProxyState { pid: number; port: number; mode: ProxyMode; file: string; ca: string; log: string }
 
 const stateFile = (root: string) => path.join(root, '.redlines', 'data-proxy.json');
+// Asks the proxy to stop: a file it watches for, since Windows has no signal a process can catch to end cleanly.
+const stopFile = (root: string) => path.join(root, '.redlines', 'data-proxy.stop');
 const caDir = (root: string) => path.join(root, '.redlines', 'proxy-ca');
 // Bodies bigger than this are passed on, not kept.
 const MAX_BODY = 5 * 1024 * 1024;
@@ -109,8 +111,10 @@ export async function runProxy({ root, mode, file, port, log = console.log }: { 
     const timer = setInterval(() => void save(), 2000);
     await server.start(port);
     log(`data proxy (${mode}) on 127.0.0.1:${port}, ${mode === 'record' ? 'recording into' : 'replaying'} ${file}`);
+    fs.rmSync(stopFile(root), { force: true });
     await new Promise<void>(resolve => {
-        const stop = () => resolve();
+        const watch = setInterval(() => { if (fs.existsSync(stopFile(root))) stop(); }, 250);
+        const stop = () => { clearInterval(watch); resolve(); };
         process.once('SIGTERM', stop);
         process.once('SIGINT', stop);
     });
@@ -177,9 +181,11 @@ export async function startProxy({ root, mode, file, port = 8899 }: { root: stri
 export async function stopProxy(root: string): Promise<(ProxyState & { said?: string }) | undefined> {
     const state = readState(root);
     if (!state) return undefined;
-    process.kill(state.pid, 'SIGTERM');
+    // Asked to stop, it saves its recording and says what it did; only if it hangs is it killed.
+    fs.writeFileSync(stopFile(root), '');
     for (let i = 0; i < 80 && alive(state.pid); i++) await new Promise(r => setTimeout(r, 250));
     if (alive(state.pid)) process.kill(state.pid, 'SIGKILL');
+    fs.rmSync(stopFile(root), { force: true });
     fs.rmSync(stateFile(root), { force: true });
     // Its last word: how many it answered and passed on.
     const said = fs.existsSync(state.log) ? fs.readFileSync(state.log, 'utf8').trim().split('\n').filter(l => l.startsWith('data proxy stopped')).pop() : undefined;
