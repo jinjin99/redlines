@@ -8,6 +8,7 @@ import path from 'node:path';
 import type { Page } from 'playwright-core';
 
 import { launch } from './browser.js';
+import { workDir } from './package.js';
 
 /** Where the login state for an app (by its origin) is kept. */
 export function authFile(root: string, url: string): string {
@@ -85,6 +86,7 @@ export async function logIn({ root, url, until, timeoutMinutes = 5, headless = f
         }
         // What the app stores once logged in (a token in local storage) lands after its requests.
         await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+        workDir(root);
         const file = authFile(root, url);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         // Kept out of git even where .redlines/ is not ignored.

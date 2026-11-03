@@ -46,11 +46,24 @@
     "@eslint/js": "10.0.1",
     "@types/node": "20.19.43",
     "eslint": "10.12.0",
+    "mockttp": "4.6.3",
     "msw": "2.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1"
   },
-  "types": "dist/src/index.d.ts"
+  "types": "dist/src/index.d.ts",
+  "peerDependencies": {
+    "msw": ">=2.4",
+    "mockttp": ">=4.6"
+  },
+  "peerDependenciesMeta": {
+    "msw": {
+      "optional": true
+    },
+    "mockttp": {
+      "optional": true
+    }
+  }
 }

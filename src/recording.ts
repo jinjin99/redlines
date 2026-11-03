@@ -7,15 +7,26 @@ import path from 'node:path';
 
 import type { Page, Request as PlaywrightRequest, Response } from 'playwright-core';
 
-interface Entry {
+import { workDir } from './package.js';
+
+export interface Entry {
     request: { method: string; url: string; postData?: { mimeType: string; text: string } };
     response: { status: number; content: { mimeType: string; text: string; encoding?: 'base64' } };
 }
 
-/** Collects a page's API answers as they arrive. */
+/** Collects API answers as they arrive: a page's (watch), or any others (add). */
 export class Recorder {
     private entries: Entry[] = [];
     private pending: Promise<void>[] = [];
+
+    /** An answer seen elsewhere (the data proxy's). */
+    push(entry: Entry) {
+        this.entries.push(entry);
+    }
+
+    get size() {
+        return this.entries.length;
+    }
 
     watch(page: Page) {
         page.on('response', response => {
@@ -52,8 +63,14 @@ export class Recorder {
         const old: Entry[] = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')).log?.entries ?? []) : [];
         const keys = new Set(this.entries.map(keyOf));
         const entries = [...this.entries, ...old.filter(e => !keys.has(keyOf(e)))];
+        // A recording is real backend data: under a .redlines/ folder, that folder keeps it out of git.
+        const at = file.split(path.sep).lastIndexOf('.redlines');
+        if (at > 0) workDir(file.split(path.sep).slice(0, at).join(path.sep) || path.sep);
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ log: { version: '1.2', creator: { name: 'redlines', version: '1' }, entries } }, null, 1));
+        // Written whole, then moved into place: the browser's recording and the proxy's may share the file.
+        const tmp = `${file}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ log: { version: '1.2', creator: { name: 'redlines', version: '1' }, entries } }, null, 1));
+        fs.renameSync(tmp, file);
         return this.entries.length;
     }
 }
@@ -61,7 +78,13 @@ export class Recorder {
 const keyOf = (e: Entry) => `${e.request.method} ${e.request.url} ${e.request.postData?.text ?? ''}`;
 const pathOf = (url: string) => { const u = new URL(url); return u.pathname + u.search; };
 
-export interface Recording { file: string; lookup: (request: PlaywrightRequest) => Entry | undefined }
+export interface Recording {
+    file: string;
+    /** For a page's request: its API requests (fetch, XHR) only. */
+    lookup: (request: PlaywrightRequest) => Entry | undefined;
+    /** For any request (the data proxy's). */
+    find: (method: string, url: string, body?: string) => Entry | undefined;
+}
 
 /**
  * A HAR to answer from. A request is matched by method, path and query (any host: the dev server's
@@ -79,12 +102,13 @@ export function loadRecording(file: string): Recording {
         const l = `${e.request.method} ${new URL(e.request.url).pathname}`;
         if (!loose.has(l)) loose.set(l, e);
     }
+    const find = (method: string, url: string, body?: string) => exact.get(`${method} ${pathOf(url)} ${body ?? ''}`) ?? loose.get(`${method} ${new URL(url).pathname}`);
     return {
         file,
+        find,
         lookup: request => {
             const type = request.resourceType();
-            if (type !== 'xhr' && type !== 'fetch') return undefined;
-            return exact.get(`${request.method()} ${pathOf(request.url())} ${request.postData() ?? ''}`) ?? loose.get(`${request.method()} ${new URL(request.url()).pathname}`);
+            return type === 'xhr' || type === 'fetch' ? find(request.method(), request.url(), request.postData() ?? undefined) : undefined;
         },
     };
 }

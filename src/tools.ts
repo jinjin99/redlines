@@ -6,6 +6,8 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { logIn, storedAuth } from './auth.js';
+import { workDir } from './package.js';
+import { proxyEnv, proxyStatus, startProxy, stopProxy } from './proxy.js';
 import { captureStates, loadConfig, recordData, viewPage } from './capture.js';
 import { formatChanges } from './diff.js';
 import { exportDesign } from './export.js';
@@ -143,6 +145,7 @@ export const TOOLS: Tool[] = [
         async run({ base, out, states, config: file }, { root, log }) {
             const config = await loadConfig(file ? inProject(root, file) : undefined, root);
             const dir = inProject(root, out);
+            if (dir.startsWith(path.join(root, '.redlines'))) workDir(root);
             const results = await captureStates({ config, base, out: dir, only: states, root, log: log ?? (() => {}) });
             const lines = results.map(r => (r.ok ? `ok   ${r.name}${r.fidelity != null ? ` (html ${(r.fidelity * 100).toFixed(1)}% like the page)` : ''}${r.errors.length ? `; page errors: ${r.errors.join(' | ')}` : ''}` : `FAIL ${r.name}: ${r.error}`));
             return { text: `${path.relative(root, dir)}:\n${lines.join('\n')}`, isError: results.some(r => !r.ok) };
@@ -165,6 +168,31 @@ export const TOOLS: Tool[] = [
             const { results, answers } = await recordData({ config, base, file: har, only: states, root, log: log ?? (() => {}) });
             const lines = results.map(r => (r.ok ? `ok   ${r.name}` : `FAIL ${r.name}: ${r.error}`));
             return { text: `${lines.join('\n')}\n${answers} answers recorded into ${path.relative(root, har)}. Set recording: '${path.relative(path.dirname(config.file), har)}' in the config to capture from it.`, isError: results.some(r => !r.ok) };
+        },
+    },
+    {
+        name: 'data_proxy',
+        title: 'Record or replay the server\'s own requests',
+        description: 'For an app that fetches data on the server (server rendering), which browser-side mocks and recordings never see. start runs a local proxy in the background and returns the environment variables to start the dev server with, so its requests to the backend go through the proxy: mode "record" passes them on and keeps the answers in the recording file (the same file record_data writes, and capture_states replays with `recording` in the config); mode "replay" answers from it. stop ends it (saving the recording); status says whether one runs. Restart the dev server with the variables after start, and without them after stop.',
+        input: {
+            action: z.enum(['start', 'stop', 'status']),
+            mode: z.enum(['record', 'replay']).optional().describe('For start (default record).'),
+            out: z.string().optional().describe('The recording file in the project (default .redlines/recording.har).'),
+            port: z.number().int().min(1024).max(65535).optional().describe('For start (default 8899).'),
+        },
+        annotations: { openWorldHint: true },
+        async run({ action, mode, out, port }, { root }) {
+            if (action === 'status') {
+                const state = proxyStatus(root);
+                return { text: state ? `running: ${state.mode}, port ${state.port}, ${path.relative(root, state.file)} (pid ${state.pid}, log ${path.relative(root, state.log)})` : 'not running' };
+            }
+            if (action === 'stop') {
+                const state = await stopProxy(root);
+                return { text: state ? `${state.said ?? `stopped the ${state.mode} proxy`}${state.mode === 'record' ? `; the recording is ${path.relative(root, state.file)}` : ''}. Restart the dev server without the proxy variables.` : 'no data proxy was running' };
+            }
+            const state = await startProxy({ root, mode: mode ?? 'record', file: inProject(root, out, '.redlines/recording.har'), port });
+            const env = Object.entries(proxyEnv(state)).map(([k, v]) => `${k}=${v}`).join(' ');
+            return { text: `data proxy (${state.mode}) running on port ${state.port}.\nStart (or restart) the dev server with these variables, e.g.:\n  ${env} npm run dev\nThen ${state.mode === 'record' ? 'run record_data (the browser side) and capture as usual; data_proxy stop saves the recording' : 'capture_states as usual, with recording set in the config'}. Node 22.21+/24.5+ sends its fetch through the proxy with NODE_USE_ENV_PROXY; clients like axios read HTTP(S)_PROXY themselves. The certificate in NODE_EXTRA_CA_CERTS is this proxy's own, trusted by that dev server only.` };
         },
     },
     {

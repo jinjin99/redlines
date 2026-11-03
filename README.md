@@ -60,6 +60,7 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 
 | Tool | What it does |
 | --- | --- |
+| `data_proxy --action start\|stop\|status [--mode record\|replay] [--out <file>] [--port <n>]` | Records or replays the requests a server-rendering app makes on the server. See [the data proxy](#server-side-requests-the-data-proxy). |
 | `record_data --base <url> [--out <file>] [--states <names>]` | Records the API answers each state fetches from a real backend into a HAR file, to replay on later captures. See [Mock data](#mock-data). |
 | `log_in --url <url> [--until <selector>] [--timeoutMinutes <n>]` | For an app behind a login: opens a browser window on the app for **you** to log in, waits until you have, and keeps the login for that app. See [Apps behind a login](#apps-behind-a-login). |
 | `view_page --url <url> [--steps <json>] [--mocks <json>] [--width] [--height] [--fullPage]` | Opens a page of the running app (doing the steps first) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing (on the command line, the screenshot goes to `.redlines/view_page.png`). |
@@ -73,7 +74,9 @@ Every path a tool reads or writes is inside the project folder (the current dire
 
 ## Mock data
 
-The same data on both versions is what makes a comparison mean anything, so redlines answers the page's requests itself, without touching the app: no code in it, no service worker, nothing to start. Requests nothing answers go to the network as usual. Three sources, tried in this order (the first with an answer wins):
+The same data on both versions is what makes a comparison mean anything, so redlines answers the page's requests itself, without touching the app: no code in it, no service worker, nothing to start. Requests nothing answers go to the network as usual. `.redlines/` gets a `.gitignore` of its own the first time redlines writes there: captures, recordings (real backend data) and logins stay out of git unless you delete it.
+
+Three sources, tried in this order (the first with an answer wins):
 
 1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data.
 2. **Your MSW handlers**: if the project already mocks with [MSW](https://mswjs.io) (2.4 or later), point at the module:
@@ -100,7 +103,25 @@ The same data on both versions is what makes a comparison mean anything, so redl
 
    `record_data` opens every state against the real backend, with no mocks, and keeps the API answers the pages fetch: fetch and XHR only, never scripts or styles (those must come from the version being captured), no request headers, and of the response only its body and content type. Recording again adds to the file. Replay matches a request by method, path and query (any host, so a different dev server port works) and body, falling back to method and path. The file is the backend's real data: keep it out of public repositories.
 
-All three answer requests the **browser** makes. An app that renders on the server (Next.js, Remix, TanStack Start, an SSR dev server) fetches its first screen's data on the server, where they can't reach: the data is already in the HTML the browser gets, and only what the page fetches afterwards (paging, filtering, a dialog's data) goes through them. For such an app, capture both versions against the same backend close together in time, with `now` set, or mock on the server side.
+All three answer requests the **browser** makes. An app that renders on the server (Next.js, Remix, TanStack Start, an SSR dev server) fetches its first screen's data on the server, where they can't reach: the data is already in the HTML the browser gets. For that, there is the data proxy.
+
+### Server-side requests: the data proxy
+
+The dev server is started with proxy variables, so its own requests to the backend go through a local proxy redlines runs. Recording, the proxy passes them on and keeps the answers; replaying, it answers from them. It reads and writes the same recording file as `record_data`, so one file holds the server's requests and the browser's.
+
+```bash
+npm install --save-dev mockttp                          # the proxy's engine, an optional dependency
+npx redlines data_proxy --action start --mode record    # prints the variables for the dev server
+HTTP_PROXY=… HTTPS_PROXY=… NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=… npm run dev
+npx redlines record_data --base http://localhost:3000   # the browser side, into the same file
+npx redlines data_proxy --action stop                   # saves the recording
+```
+
+Then the same with `--mode replay`, and `recording` set in the config, for every capture after. `data_proxy --action stop` says how many requests were answered from the recording and how many passed on to the backend (with a list of the ones the recording lacks in `.redlines/data-proxy.log`), so a replay that quietly went to the backend shows.
+
+HTTPS is read by acting as the backend towards the dev server, with a certificate from a certificate authority made for this proxy alone (`.redlines/proxy-ca/`, the key readable only by you), which only that dev server is told to trust, through `NODE_EXTRA_CA_CERTS`. Nothing is installed system-wide, and the browser is not involved. Node sends its own `fetch` and `http` through the variables from 22.21 / 24.5 on (`NODE_USE_ENV_PROXY`); clients such as axios read `HTTP(S)_PROXY` themselves. `localhost` is left out, so the dev server's calls to itself are untouched.
+
+Without the proxy, capture both versions against the same backend close together in time, with `now` set: on a quiet test backend, two captures in a row come out the same.
 
 ### What a project provides
 

@@ -58,6 +58,14 @@ function parse(tool: Tool, argv: string[]): Record<string, unknown> {
 
 async function main() {
     const [command, ...argv] = process.argv.slice(2);
+    // The data proxy's own process (data_proxy start runs it in the background).
+    if (command === '__data_proxy') {
+        const { runProxy } = await import('../src/proxy.js');
+        const [mode, file, port] = argv;
+        if ((mode !== 'record' && mode !== 'replay') || !file || !Number(port)) throw new Error('__data_proxy <record|replay> <file> <port>');
+        await runProxy({ root: process.cwd(), mode, file, port: Number(port) });
+        return;
+    }
     if (command === 'mcp') {
         const { serveStdio } = await import('../src/mcp.js');
         await serveStdio();
