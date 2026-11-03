@@ -63,6 +63,7 @@ const CONFIG_EXAMPLE = `export default {
     viewport: { width: 1280, height: 800 },
     // API answers every state gets, so both versions show the same data.
     mocks: { 'GET /api/orders': [{ id: '#1001', customer: 'Ada Lovelace', status: 'Paid' }] },
+    // Or the project's own MSW handlers (relative to this file): msw: './src/mocks/handlers.ts',
     states: {
         list: { path: '/orders', title: 'Order list' },
         details: { path: '/orders', title: 'Order details', steps: [{ click: 'text=#1001' }] },
@@ -120,10 +121,11 @@ export const TOOLS: Tool[] = [
                 config = await loadConfig(file ? inProject(root, file) : undefined, root);
             } catch (e) {
                 if (!/No config/.test((e as Error).message)) throw e;
-                return { text: `No redlines config in ${root}. Write redlines.config.mjs there, for example:\n\n${CONFIG_EXAMPLE}\n\nState names are letters, digits, - and _. Steps: click, fill [selector, text], press, hover, select [selector, value], waitFor, wait (ms). List every screen and state the change touches, including dialogs and empty or error states.` };
+                return { text: `No redlines config in ${root}. Write redlines.config.mjs there, for example:\n\n${CONFIG_EXAMPLE}\n\nIf the project already has MSW handlers, use them (msw) rather than writing mocks again; a state can pick another exported list with msw: '<export>'. State names are letters, digits, - and _. Steps: click, fill [selector, text], press, hover, select [selector, value], waitFor, wait (ms). List every screen and state the change touches, including dialogs and empty or error states.` };
             }
-            const states = Object.entries(config.states).map(([name, s]) => `  ${name}: ${s.title ?? name} — ${s.path ?? '/'}${s.steps?.length ? `, ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}${s.mocks ? `, mocks ${Object.keys(s.mocks).join(', ')}` : ''}`);
-            return { text: `${path.relative(root, config.file)}\nbaseURL: ${config.baseURL ?? '(none: pass base to capture_states)'}\nglobal mocks: ${Object.keys(config.mocks ?? {}).join(', ') || 'none'}\nstates:\n${states.join('\n')}` };
+            const states = Object.entries(config.states).map(([name, s]) => `  ${name}: ${s.title ?? name} — ${s.path ?? '/'}${s.steps?.length ? `, ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}${s.mocks ? `, mocks ${Object.keys(s.mocks).join(', ')}` : ''}${s.msw ? `, MSW scenario ${s.msw}` : ''}`);
+            const msw = config.msw ? (typeof config.msw === 'string' ? config.msw : `${config.msw.file} (export ${config.msw.export ?? 'handlers'})`) : 'none';
+            return { text: `${path.relative(root, config.file)}\nbaseURL: ${config.baseURL ?? '(none: pass base to capture_states)'}\nglobal mocks: ${Object.keys(config.mocks ?? {}).join(', ') || 'none'}\nMSW handlers: ${msw}\nstates:\n${states.join('\n')}` };
         },
     },
     {

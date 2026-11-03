@@ -70,6 +70,32 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 
 Every path a tool reads or writes is inside the project folder (the current directory, or `REDLINES_ROOT`).
 
+## Mock data
+
+The same data on both versions is what makes a comparison mean anything, so redlines answers the page's requests itself, without touching the app: no code in it, no service worker, nothing to start. Requests nothing answers go to the network as usual. Three sources, tried in this order:
+
+1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data.
+2. **Your MSW handlers**: if the project already mocks with [MSW](https://mswjs.io) (2.4 or later), point at the module:
+
+   ```js
+   msw: './src/mocks/handlers.ts',           // its `handlers` export; or { file, export: 'name' }
+   states: {
+       list: { path: '/orders' },
+       empty: { path: '/orders', msw: 'emptyOrders' },   // another list the module exports, used first
+   },
+   ```
+
+   The path is relative to the config file, so the handlers can live outside the app's repository. Handlers in TypeScript load on Node 22.18 or later; on Node 20, point at compiled JavaScript.
+
+### What a project provides
+
+redlines needs nothing in the app's code. A project, or a separate repository next to it, provides:
+
+- a `redlines.config.mjs`: the states to capture, and where their data comes from;
+- the data: inline `mocks`, an MSW handlers module, or both.
+
+`list_states` (and its MCP tool) reads the config back, so an agent setting up a new project sees what is there and what is missing.
+
 ## Apps behind a login
 
 redlines never asks for a password. You log in yourself, once per app:

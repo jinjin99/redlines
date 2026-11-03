@@ -78,6 +78,8 @@ export interface StateConfig {
     title?: string;
     steps?: Step[];
     mocks?: Record<string, MockAnswer>;
+    /** A handler list the MSW module exports, used before its default list (a scenario: `emptyOrders`). */
+    msw?: string;
     viewport?: { width: number; height: number };
     settle?: number;
     /** How long each step waits for what it acts on (ms), default 5000. */
@@ -89,6 +91,8 @@ export interface Config {
     baseURL?: string;
     viewport?: { width: number; height: number };
     mocks?: Record<string, MockAnswer>;
+    /** A project's MSW handlers answering requests not in `mocks`: the module (relative to the config), or { file, export }. */
+    msw?: import('./msw.js').MswConfig;
     states: Record<string, StateConfig>;
     settle?: number;
     stepTimeout?: number;
