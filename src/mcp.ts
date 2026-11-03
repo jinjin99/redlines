@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { VERSION } from './package.js';
-import { INSTRUCTIONS, TOOLS } from './tools.js';
+import { INSTRUCTIONS, PROMPTS, TOOLS } from './tools.js';
 
 export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd() } = {}) {
     const server = new McpServer({ name: 'redlines', version: VERSION }, { instructions: INSTRUCTIONS });
@@ -22,6 +22,11 @@ export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(p
                 return { content: [{ type: 'text' as const, text: `redlines: ${(e as Error).message}` }], isError: true };
             }
         });
+    }
+    for (const prompt of PROMPTS) {
+        server.registerPrompt(prompt.name, { title: prompt.title, description: prompt.description, argsSchema: prompt.args }, args => ({
+            messages: [{ role: 'user' as const, content: { type: 'text' as const, text: prompt.text(args as Record<string, string | undefined>) } }],
+        }));
     }
     return server;
 }

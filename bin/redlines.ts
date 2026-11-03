@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { type Tool, TOOLS } from '../src/tools.js';
+import { PROMPTS, type Tool, TOOLS } from '../src/tools.js';
 
 // zod's own description of a schema: unwrapped past optional and refinements to the kind of value it takes.
 const kindOf = (schema: z.ZodTypeAny): string | undefined => {
@@ -27,6 +27,7 @@ function help() {
         });
         lines.push(`  ${t.name} ${inputs.join(' ')}`, `      ${t.description}`, '');
     }
+    for (const p of PROMPTS) lines.push(`  prompt ${p.name} ${Object.keys(p.args).map(k => `--${k} <${k}>`).join(' ')}`, `      ${p.description} Prints the steps for an agent.`, '');
     lines.push('  mcp', '      Serve these tools over stdio for coding agents: claude mcp add redlines -- npx -y github:jinjin99/redlines mcp');
     return lines.join('\n');
 }
@@ -69,6 +70,13 @@ async function main() {
     if (command === 'mcp') {
         const { serveStdio } = await import('../src/mcp.js');
         await serveStdio();
+        return;
+    }
+    if (command === 'prompt') {
+        const prompt = PROMPTS.find(p => p.name === argv[0]);
+        if (!prompt) throw new Error(`prompt ${PROMPTS.map(p => p.name).join(' | ')}`);
+        const args = parse({ name: `prompt ${prompt.name}`, input: prompt.args } as Tool, argv.slice(1)) as Record<string, string>;
+        console.log(prompt.text(args));
         return;
     }
     const tool = TOOLS.find(t => t.name === command);

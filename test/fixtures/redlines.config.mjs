@@ -1,4 +1,5 @@
-// The fixture app's states: its list, and the details dialog a click opens. Orders come from a mock.
+// The fixture app's states: its list, and the details dialog a click opens (so the list links to it
+// by itself); the dialog's Close leads back. Orders come from a mock.
 export default {
     viewport: { width: 1024, height: 700 },
     mocks: {
@@ -10,6 +11,6 @@ export default {
     },
     states: {
         list: { path: '/index.html', title: 'Order list' },
-        details: { path: '/index.html', title: 'Order details dialog', steps: [{ click: 'text=#1001' }] },
+        details: { path: '/index.html', title: 'Order details dialog', steps: [{ click: 'text=#1001' }], links: { '#close': 'list' } },
     },
 };

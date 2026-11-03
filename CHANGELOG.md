@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+Designing with it: a requirement drafted in code, a canvas a designer edits and plays through, their edits back in the code.
+
+- **Flows**: exports link the states where a click leads, so the HTML pages click through and Play on a Claude Design canvas walks the flow. A state continuing another's steps is linked from it by itself; other ways go in a state's `links`.
+- **Designers' edits** (`find_design_edits`): the edited artboards against the export, as a list of changes like `find_changes`; added artboards come with an outline.
+- **`draft_design` prompt** (MCP, and `redlines prompt draft_design`): the whole round trip, step by step, for an agent.
+- Installing `#v0.1.0` from GitHub did not build (that tag predates building on install); install `#v0.2.0`.
+
 ## 0.1.0
 
 First release.

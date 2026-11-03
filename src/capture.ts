@@ -14,7 +14,7 @@ import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
 import { loadRecording, Recorder, type Recording, replay } from './recording.js';
 import { freeze } from './page/freeze.js';
 import { snapshot } from './page/snapshot.js';
-import type { Config, Manifest, MockAnswer, PageTree, Step } from './types.js';
+import type { Box, Config, Link, Manifest, MockAnswer, PageTree, Step } from './types.js';
 
 const CONFIG_NAMES = ['redlines.config.mjs', 'redlines.config.js', 'redlines.config.json'];
 
@@ -216,8 +216,44 @@ export async function viewPage({ url, steps, mocks, viewport, settle, storageSta
     }
 }
 
+const stepKey = (s: Step) => (typeof s === 'function' ? `function ${s.toString()}` : JSON.stringify(s));
+
+/**
+ * Where clicking goes from state `name`: the config's own links, and each state that continues this
+ * one's steps on the same page (its steps start with all of this one's, then a click): that click,
+ * to it. A state continuing several is linked from the one it continues furthest.
+ */
+export function linksFrom(config: Config, name: string): { selector: string; to: string }[] {
+    const states = Object.entries(config.states);
+    const at = (s: Config['states'][string]) => s.path ?? '/';
+    const links = Object.entries(config.states[name].links ?? {}).map(([selector, to]) => ({ selector, to }));
+    for (const [other, s] of states) {
+        if (other === name) continue;
+        const steps = s.steps ?? [];
+        // The state it continues furthest: same page, every one of its steps first.
+        const parent = states
+            .filter(([n, p]) => n !== other && at(p) === at(s) && (p.steps ?? []).length < steps.length && (p.steps ?? []).every((x, i) => stepKey(x) === stepKey(steps[i])))
+            .sort((x, y) => (y[1].steps ?? []).length - (x[1].steps ?? []).length)[0];
+        if (parent?.[0] !== name) continue;
+        const click = steps.slice((parent[1].steps ?? []).length).find((x): x is { click: string } => typeof x === 'object' && 'click' in x);
+        if (click && !links.some(l => l.to === other)) links.push({ selector: click.click, to: other });
+    }
+    return links;
+}
+
+/** The first element `selector` matches, its box on the whole page; none, or not shown: undefined. */
+async function boxOf(page: Page, selector: string): Promise<Box | undefined> {
+    const el = page.locator(selector).first();
+    try {
+        if (!(await el.count()) || !(await el.isVisible())) return undefined;
+        return await el.evaluate(e => { const r = e.getBoundingClientRect(); return [r.x + scrollX, r.y + scrollY, r.width, r.height].map(Math.round) as [number, number, number, number]; });
+    } catch {
+        return undefined;
+    }
+}
+
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
-export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null }
+export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[] }
 
 export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void }): Promise<CaptureResult[]> {
     const baseURL = base ?? config.baseURL;
@@ -263,6 +299,13 @@ export async function captureStates({ config, base, out, only, root = process.cw
                 const tree = await evaluateSettled(page, snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
+                // Where its clicks go, measured on the page as it is now.
+                const links: Link[] = [];
+                for (const l of linksFrom(config, name)) {
+                    const box = await boxOf(page, l.selector);
+                    if (box) links.push({ ...l, box });
+                    else log(`     ${name}: the link to ${l.to} is not on the page (${l.selector})`);
+                }
                 const shot = await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
                 // The page as one editable HTML file, checked against the screenshot: opened again, how much differs.
                 let fidelity: number | null = null;
@@ -280,7 +323,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                         await check.close();
                     }
                 }
-                results.push({ name, ok: true, errors, fidelity });
+                results.push({ name, ok: true, errors, fidelity, links });
                 const same = fidelity === null ? '' : `  html ${(fidelity * 100).toFixed(2)}% the same as the page`;
                 log(`ok   ${name}${same}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
             } catch (error) {
@@ -294,7 +337,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
     } finally {
         await browser.close();
     }
-    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }) })) };
+    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}) })) };
     // Capturing some states adds to what the folder had.
     const file = path.join(out, 'manifest.json');
     if (only?.length && fs.existsSync(file)) {

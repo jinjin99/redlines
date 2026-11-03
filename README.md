@@ -20,14 +20,14 @@ It is not pixel diffing. redlines reads the rendered page: elements, text, the s
 
 ## Quick start
 
-Install it from GitHub (it builds itself on install; `#v0.1.0` pins a release, `#main` follows the latest):
+Install it from GitHub (it builds itself on install; `#v0.2.0` pins a release, `#main` follows the latest):
 
 ```bash
-npm install --save-dev github:jinjin99/redlines#v0.1.0
+npm install --save-dev github:jinjin99/redlines#v0.2.0
 npx playwright-core install chromium   # if you don't have a Chromium from Playwright already
 ```
 
-Or run it without installing: `npx -y github:jinjin99/redlines#v0.1.0 <tool> …`.
+Or run it without installing: `npx -y github:jinjin99/redlines#v0.2.0 <tool> …`.
 
 Describe the states to look at in `redlines.config.mjs`:
 
@@ -60,7 +60,7 @@ The review page is a folder of static files: open it locally, or put it on any s
 
 ## Tools
 
-The same six tools, by the same names and inputs, on the command line (`redlines <tool> --<input> <value>`) and over MCP. Arrays and objects are given as JSON on the command line (`--steps '[{"click":"text=Save"}]'`), a boolean as a bare flag (`--fullPage`). `redlines help` lists them with their inputs.
+The same tools, by the same names and inputs, on the command line (`redlines <tool> --<input> <value>`) and over MCP. Arrays and objects are given as JSON on the command line (`--steps '[{"click":"text=Save"}]'`), a boolean as a bare flag (`--fullPage`). `redlines help` lists them with their inputs.
 
 | Tool | What it does |
 | --- | --- |
@@ -72,7 +72,8 @@ The same six tools, by the same names and inputs, on the command line (`redlines
 | `capture_states --base <url> --out <dir> [--states <names>] [--config <file>]` | Opens each state at `base`, does its steps, waits for it to settle, and writes `<state>.json` (the page tree), `<state>.png` (a full-page screenshot) and `<state>.html` (the page frozen as standalone HTML) into `out`, with a `manifest.json`. |
 | `find_changes --before <dir> --after <dir> [--json]` | The changes between two captured folders, state by state. `--json` adds each change's boxes on the page. |
 | `create_review --before <dir> --after <dir> [--out <dir>] [--title <text>]` | The review page: `index.html`, the screenshots and `changes.json` (default `.redlines/review`). |
-| `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. |
+| `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. Both link the states where a click leads, so the pages click through (Play on the canvas). See [Designing with it](#designing-with-it). |
+| `find_design_edits --edited <dir> [--exported <dir>] [--json]` | What a designer changed on an exported canvas: the artboards as exported (default `.redlines/design`) against the same files read back after they edited them, as the same list of changes `find_changes` gives. Artboards they added come with an outline. |
 
 Every path a tool reads or writes is inside the project folder (the current directory, or `REDLINES_ROOT`).
 
@@ -154,13 +155,29 @@ login: { path: '/login', steps: [{ fill: ['#email', { env: 'APP_USER' }] }, { fi
 
 Error messages name the variable, never its value. For apps that decide in the browser whether you are logged in (they ask an API who you are), a mock of that API is often enough: `mocks: { 'GET /api/me': { id: 'u1', name: 'Designer' } }`.
 
+## Designing with it
+
+The same captures make a design to work on: a requirement drafted in the real code, a canvas a designer edits and plays through, and their edits read back into the code.
+
+1. **Draft.** An agent changes the code for the requirement on a branch, lists the new screens and states in the config, captures them and exports a canvas (`export_design`). The `draft_design` prompt (MCP, or `redlines prompt draft_design --requirement "…"`) walks it through every step.
+2. **Play.** Where a click leads from one state to another, the export puts a see-through link over the element: Play on the canvas (or clicking through the HTML pages) walks the flow. A state whose steps continue another's on the same page is linked from it by itself (the list's `#1001` leads to the details dialog); other ways, like Back or a link to another page, are the state's `links`:
+
+   ```js
+   details: { path: '/orders', steps: [{ click: 'text=#1001' }], links: { '#close': 'list' } },
+   ```
+
+3. **Edit.** The designer edits the canvas: copy, spacing, colours, new artboards, comments.
+4. **Back to code.** Read the edited artboards into a folder in the project (same file names) and `find_design_edits --edited <folder>` lists each edit against the export: where it is, what it says now and before, styles property by property. The agent carries them into the code, through the project's components and tokens, then captures and exports again; the canvas then shows the code, edits included.
+
+The baseline for the designer's edits is the export itself (`.redlines/design`), so nothing else is stored: no database, no server. Exporting again makes the new export the baseline.
+
 ## For coding agents (MCP)
 
-`redlines mcp` serves the same tools over stdio, with instructions telling the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, capture the app before (main branch) and after (its working copy), find the changes, and hand over the review page.
+`redlines mcp` serves the same tools over stdio, with instructions telling the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, capture the app before (main branch) and after (its working copy), find the changes, and hand over the review page. Its `draft_design` prompt walks a requirement from code to a canvas a designer edits, and back.
 
 ```bash
-claude mcp add redlines -- npx -y github:jinjin99/redlines#v0.1.0 mcp
-# other MCP clients: command "npx", args ["-y", "github:jinjin99/redlines#v0.1.0", "mcp"]
+claude mcp add redlines -- npx -y github:jinjin99/redlines#v0.2.0 mcp
+# other MCP clients: command "npx", args ["-y", "github:jinjin99/redlines#v0.2.0", "mcp"]
 ```
 
 Run it from the project folder.
@@ -173,7 +190,8 @@ The config is checked when it is read: a key redlines doesn't know is an error n
 | --- | --- |
 | `baseURL` | Where the app runs. `--base` overrides it, so one config captures both versions. |
 | `viewport` | `{ width, height }`, default 1280 × 800. A state can set its own. |
-| `states` | `{ <name>: { path, title, steps, mocks, viewport, settle, ignore } }`. Names are letters, digits, `-` and `_`. |
+| `states` | `{ <name>: { path, title, steps, mocks, viewport, settle, ignore, links } }`. Names are letters, digits, `-` and `_`. |
+| `links` | Per state, `{ <selector>: <state> }`: where clicking that element leads, for the exported pages and canvas to play through. A state whose steps continue another's on the same page needs none. |
 | `steps` | Done in order after the page loads: `{ click: <selector> }`, `{ fill: [<selector>, <text> or { env: <variable> }] }`, `{ press: <key> }`, `{ hover: <selector> }`, `{ select: [<selector>, <value>] }`, `{ waitFor: <selector> }`, `{ wait: <ms> }`, or a function `async page => …` (Playwright's page). Selectors are [Playwright selectors](https://playwright.dev/docs/locators): `text=Save`, `role=button[name="Save"]`, CSS. |
 | `mocks` | `{ "<METHOD> <path>": <answer> }`, for every state, and per state on top. The path is matched from the start, `*` matches anything. An answer is JSON data, `{ status, json \| body, headers }`, or a function of the request. Requests not listed go to the network. |
 | `ignore` | A CSS selector for parts of the page to leave out (a clock, an ad slot). |

@@ -25,8 +25,14 @@ const textOf = (r: unknown) => contentOf(r).filter(c => c.type === 'text').map(c
 test('mcp: the tools and how to use them', async () => {
     const client = await connect(FIXTURES);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(t => t.name).sort(), ['capture_states', 'create_review', 'data_proxy', 'export_design', 'find_changes', 'list_states', 'log_in', 'record_data', 'view_page']);
+    assert.deepEqual(tools.map(t => t.name).sort(), ['capture_states', 'create_review', 'data_proxy', 'export_design', 'find_changes', 'find_design_edits', 'list_states', 'log_in', 'record_data', 'view_page']);
     assert.match(client.getInstructions() ?? '', /call view_page on it/);
+    const { prompts } = await client.listPrompts();
+    assert.deepEqual(prompts.map(p => p.name), ['draft_design']);
+    const draft = await client.getPrompt({ name: 'draft_design', arguments: { requirement: 'Reopen a rejected order' } });
+    const text = (draft.messages[0].content as { text: string }).text;
+    assert.match(text, /Reopen a rejected order/);
+    assert.match(text, /find_design_edits/);
 });
 
 test('mcp: view_page, list_states, capture_states, find_changes, create_review, export_design', async () => {

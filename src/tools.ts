@@ -10,6 +10,7 @@ import { workDir } from './package.js';
 import { proxyEnv, proxyStatus, startProxy, stopProxy } from './proxy.js';
 import { captureStates, loadConfig, recordData, viewPage } from './capture.js';
 import { formatChanges } from './diff.js';
+import { findDesignEdits } from './edits.js';
 import { exportDesign } from './export.js';
 import { outline } from './outline.js';
 import { findChanges, writeReport } from './report.js';
@@ -40,7 +41,8 @@ Use it whenever you change UI code:
    - You need the app running twice: before the change (usually the main branch: a second checkout, e.g. git worktree add, with its own dev server on another port) and after it (your working copy). If you don't know how to run the app, ask the user for the two URLs.
    - capture_states with the before URL into one folder and with the after URL into another (same config), then find_changes between them. Check the list matches what you meant to change: anything you did not intend is worth telling the user about.
    - create_review writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
-   - export_design gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages).
+   - export_design gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages). States link to each other where a click leads (a state whose steps continue another's, and a state's links in the config), so the pages can be clicked through, or played on the canvas.
+3. Work with a designer: the draft_design prompt walks it (a requirement drafted in code, exported as a canvas they edit and play through). When they have edited the canvas, read its artboards back into a folder and call find_design_edits against the export: carry each edit into the code, then capture and export again.
 Folders default to .redlines/ in the project. Paths must stay inside the project.`;
 
 /** A path inside the project (relative paths are from the project); anything else is refused. */
@@ -222,14 +224,60 @@ export const TOOLS: Tool[] = [
         },
     },
     {
+        name: 'find_design_edits',
+        title: 'Find what a designer changed',
+        description: 'Compare an exported canvas (export_design\'s folder) with the same artboards after a designer edited them (read back into another folder in the project, same file names), and list each edit like find_changes does: where, what it holds now and before, styles property by property; artboards they added come with an outline. Carry the edits into the code, then capture and export again.',
+        input: { exported: z.string().optional().describe('The folder export_design wrote (default .redlines/design)'), edited: z.string().describe('The edited artboards, read back into a folder in the project, e.g. .redlines/design-edited'), json: z.boolean().optional() },
+        annotations: { readOnlyHint: true },
+        async run({ exported, edited, json }, { root }) {
+            const boards = await findDesignEdits(inProject(root, exported, '.redlines/design'), inProject(root, edited));
+            if (json) return { text: JSON.stringify(boards, null, 2) };
+            const parts = boards.filter(b => b.status !== 'same').map(b => `### ${b.title || b.file} (${b.file})\n${b.status === 'changed' ? formatChanges(b.changes) : b.status === 'added' ? `a new artboard on the canvas:\n${b.outline}` : 'removed from the canvas'}`);
+            const same = boards.filter(b => b.status === 'same').map(b => b.file);
+            return { text: `${parts.join('\n\n') || 'no edits'}${same.length ? `\n\nnot edited: ${same.join(', ')}` : ''}` };
+        },
+    },
+    {
         name: 'export_design',
         title: 'Export editable designs',
         description: 'Export the states of a captured folder as editable design files: "dc" writes a Claude Design canvas (project/canvas.json and one artboard per state) to publish; "html" copies the standalone pages.',
         input: { from: z.string().describe('A captured folder'), out: z.string().optional().describe('Default .redlines/design'), format: z.enum(['dc', 'html']).optional(), title: z.string().max(200).optional() },
         async run({ from, out, format, title }, { root }) {
             const dir = inProject(root, out, '.redlines/design');
-            const { files, notes } = exportDesign(inProject(root, from), dir, { format: format ?? 'dc', title });
-            return { text: `${dir}\n  ${files.join('\n  ')}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}` };
+            const { files, notes, links } = exportDesign(inProject(root, from), dir, { format: format ?? 'dc', title });
+            const flow = links.length ? `\nlinks (click through the pages, or Play on the canvas):\n  ${links.join('\n  ')}` : '\nno links: states that continue another\'s steps, or a state\'s links in the config, join them into a flow';
+            return { text: `${dir}\n  ${files.join('\n  ')}${flow}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}` };
         },
+    },
+];
+
+export interface Prompt {
+    name: string;
+    title: string;
+    description: string;
+    args: z.ZodRawShape;
+    text(args: Record<string, string | undefined>): string;
+}
+
+/** Workflows an agent is walked through: the MCP server's prompts, and `redlines prompt <name>`. */
+export const PROMPTS: Prompt[] = [
+    {
+        name: 'draft_design',
+        title: 'Draft a design from a requirement',
+        description: 'A requirement drafted in the real code, shown as a canvas a designer edits and plays through, and their edits carried back into the code.',
+        args: { requirement: z.string().describe('What to design, in the words of whoever asked') },
+        text: ({ requirement }) => `Draft a design for this requirement, in the project's real code, for a designer to edit:
+
+<requirement>
+${requirement ?? '(ask the user for it)'}
+</requirement>
+
+1. Understand it. Find the screens and components it touches. Note what it leaves open; don't stop to ask, decide and say what you assumed.
+2. The current version. list_states shows the config (write one if there is none). Capture the app as it is now: capture_states into .redlines/before.
+3. Draft in code, on a new branch (e.g. design/<short-name>). Use the project's own components and tokens, the way the surrounding code does. Copy that isn't settled reads as a visible placeholder like [Reason shown to the shopper]. Change nothing the requirement doesn't need.
+4. List every state the draft has in the config: each new screen, dialog, menu, filled form, empty and error state. A state reached by clicking from another keeps that state's steps and adds its own (it is then linked from it, so the flow plays through); a way back or to another page goes in the state's links ({ '<selector>': '<state>' }).
+5. Check it. view_page what you changed; capture_states into .redlines/after; find_changes against .redlines/before: nothing should change that you didn't mean to. create_review for the developers.
+6. Hand it over. export_design from .redlines/after (format dc publishes as a Claude Design canvas; html gives pages to click through). Tell the designer: what each artboard shows, the flow to play, what you assumed and what is still open.
+7. When they say they've edited it: read the canvas's artboards back into .redlines/design-edited (same file names) and read their comments. find_design_edits (exported .redlines/design, edited .redlines/design-edited) lists their edits. Carry each into the code, through the components and tokens rather than raw values; text that comes from data is a data or config change, say so. Answer the comments. Then capture and export again: the canvas then shows the code, edits included. If an edit can't be made the same in code, say which and why, before the new export replaces it.`,
     },
 ];

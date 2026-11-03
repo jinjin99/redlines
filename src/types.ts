@@ -85,6 +85,8 @@ export interface StateConfig {
     /** How long each step waits for what it acts on (ms), default 5000. */
     stepTimeout?: number;
     ignore?: string;
+    /** Where clicking goes from this state: { selector: state }. A state whose steps continue another's (same path) is linked from it by itself. */
+    links?: Record<string, string>;
 }
 
 export interface Config {
@@ -116,6 +118,14 @@ export interface ManifestState {
     image: string;
     html?: string;
     fidelity?: number;
+    /** Where clicking goes from this state: the element's box on the page and the state it leads to. */
+    links?: Link[];
+}
+
+export interface Link {
+    to: string;
+    selector: string;
+    box: Box;
 }
 
 export interface Manifest {

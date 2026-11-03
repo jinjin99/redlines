@@ -27,6 +27,7 @@ const stateSchema = z
         settle: z.number().int().min(0).optional(),
         stepTimeout: z.number().int().positive().optional(),
         ignore: z.string().optional(),
+        links: z.record(z.string()).optional(),
     })
     .strict();
 
@@ -66,7 +67,11 @@ const known = (at: (string | number)[]): string[] => {
 /** The config's problems, one line each ("states.list.step: unknown key (did you mean steps?)"), or none. */
 export function configProblems(config: unknown): string[] {
     const result = configSchema.safeParse(config);
-    if (result.success) return [];
+    if (result.success) {
+        // A link goes to a state the config has.
+        const names = Object.keys(result.data.states);
+        return Object.entries(result.data.states).flatMap(([name, s]) => Object.entries(s.links ?? {}).filter(([, to]) => !names.includes(to)).map(([selector, to]) => `states.${name}.links["${selector}"]: no state "${to}" (the config has ${names.join(', ')})`));
+    }
     return result.error.issues.flatMap(issue => {
         const where = issue.path.join('.') || '(the config)';
         if (issue.code === 'unrecognized_keys') {
