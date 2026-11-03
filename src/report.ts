@@ -97,7 +97,8 @@ section.state > h2 small { color: var(--dim); font-weight: 400; }
 .shot { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--shade); }
 .shot img { display: block; width: 100%; height: auto; cursor: zoom-in; }
 .box { position: absolute; border: 2px dashed; border-radius: 4px; pointer-events: none; transition: box-shadow .15s; }
-.box b { position: absolute; left: -2px; top: -22px; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 10px; color: #fff; font: 600 11px/20px sans-serif; text-align: center; }
+.box b { position: absolute; top: 50%; transform: translateY(-50%); right: calc(100% + 4px); min-width: 20px; height: 20px; padding: 0 4px; border-radius: 10px; color: #fff; font: 600 11px/20px sans-serif; text-align: center; }
+.box.inside b { right: auto; left: 2px; }
 .box.hot { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 body.nomarks .box { display: none; }
 ol.changes { list-style: none; margin: 0; padding: 12px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; max-height: 90vh; overflow: auto; }
@@ -146,6 +147,8 @@ DATA.forEach(function (s) {
         m.style.left = (b[0] / shot.size.width * 100) + '%'; m.style.top = (b[1] / shot.size.height * 100) + '%';
         m.style.width = (b[2] / shot.size.width * 100) + '%'; m.style.height = (b[3] / shot.size.height * 100) + '%';
         m.style.borderColor = COLOR[c.kind];
+        // The number sits left of its box, off what it marks; inside it where the box meets the picture's edge.
+        if (b[0] / shot.size.width < 0.03) m.classList.add('inside');
         var n = el('b', null, String(i + 1)); n.style.background = COLOR[c.kind]; m.appendChild(n);
         box.appendChild(m);
       });

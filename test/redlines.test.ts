@@ -161,3 +161,26 @@ test('now: pages see the same time on every run', async () => {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('config: a key it does not know is an error, with the key meant', async () => {
+    const { loadConfig } = await import('../src/capture.js');
+    const os = await import('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-config-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'redlines.config.json'), JSON.stringify({
+            viewprot: { width: 800, height: 600 },
+            states: { list: { path: '/', step: [{ click: 'text=Go' }] }, 'bad name': { path: '/' }, wrong: { path: '/', steps: [{ clik: 'x' }] } },
+            now: 'yesterday',
+        }));
+        await assert.rejects(loadConfig(undefined, dir), (error: Error) => {
+            assert.match(error.message, /viewprot: unknown key \(did you mean viewport\?\)/);
+            assert.match(error.message, /states\.list\.step: unknown key \(did you mean steps\?\)/);
+            assert.match(error.message, /states\.bad name: letters, digits/);
+            assert.match(error.message, /states\.wrong\.steps\.0: a step is \{ click \}/);
+            assert.match(error.message, /now: a date/);
+            return true;
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

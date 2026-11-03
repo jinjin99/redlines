@@ -9,6 +9,7 @@ import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-c
 
 import { LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
+import { configProblems } from './config.js';
 import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
 import { loadRecording, Recorder, type Recording, replay } from './recording.js';
 import { freeze } from './page/freeze.js';
@@ -22,8 +23,9 @@ export async function loadConfig(file?: string, dir = process.cwd()): Promise<Co
     const found = file ? path.resolve(file) : CONFIG_NAMES.map(n => path.join(dir, n)).find(f => fs.existsSync(f));
     if (!found || !fs.existsSync(found)) throw new Error(`No config: write redlines.config.mjs (see README), or pass --config <file>`);
     const config = found.endsWith('.json') ? JSON.parse(fs.readFileSync(found, 'utf8')) : (await import(pathToFileURL(found).href)).default;
-    if (!config || typeof config.states !== 'object') throw new Error(`${found}: a config has "states": { "<name>": { "path": "/…" } }`);
-    for (const name of Object.keys(config.states)) if (!/^[\w-]+$/.test(name)) throw new Error(`${found}: a state's name is letters, digits, - and _ (it names files): ${name}`);
+    if (!config || typeof config !== 'object') throw new Error(`${found}: export the config object (export default { states: { … } })`);
+    const problems = configProblems(config);
+    if (problems.length) throw new Error(`${found}:\n  ${problems.join('\n  ')}`);
     return { ...config, file: found };
 }
 

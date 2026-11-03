@@ -162,6 +162,8 @@ Run it from the project folder.
 
 ## Config
 
+The config is checked when it is read: a key redlines doesn't know is an error naming the key it most likely meant (`states.list.step: unknown key (did you mean steps?)`), and every problem is listed at once, rather than a misspelt option quietly doing nothing.
+
 | Key | |
 | --- | --- |
 | `baseURL` | Where the app runs. `--base` overrides it, so one config captures both versions. |
