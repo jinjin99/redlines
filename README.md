@@ -102,7 +102,7 @@ Run it from the project folder.
 
 | Key | |
 | --- | --- |
-| `baseURL` | Where the app runs. `--base` overrides it, so one config shoots both versions. |
+| `baseURL` | Where the app runs. `--base` overrides it, so one config captures both versions. |
 | `viewport` | `{ width, height }`, default 1280 × 800. A state can set its own. |
 | `states` | `{ <name>: { path, title, steps, mocks, viewport, settle, ignore } }`. Names are letters, digits, `-` and `_`. |
 | `steps` | Done in order after the page loads: `{ click: <selector> }`, `{ fill: [<selector>, <text> or { env: <variable> }] }`, `{ press: <key> }`, `{ hover: <selector> }`, `{ select: [<selector>, <value>] }`, `{ waitFor: <selector> }`, `{ wait: <ms> }`, or a function `async page => …` (Playwright's page). Selectors are [Playwright selectors](https://playwright.dev/docs/locators): `text=Save`, `role=button[name="Save"]`, CSS. |
@@ -154,10 +154,10 @@ Each tree is read into a sequence (an element opening, its text, its closing), t
 
 ## Status
 
-Early. What works today: shooting states of any web app with Playwright, mocked APIs, React component names and props, the change list, the review page, editable exports (HTML, Claude Design), and an MCP server for coding agents. Planned:
+Early. What works today: capturing states of any web app with Playwright, mocked APIs, React component names and props, the change list, the review page, editable exports (HTML, Claude Design), and an MCP server for coding agents. Planned:
 
 - More export targets for the editable states (Figma).
-- A GitHub Action that shoots both sides of a PR and comments with the review page.
+- A GitHub Action that captures both sides of a PR and comments with the review page.
 - Reusing the mocks an app already has (MSW handlers).
 - Presets for component libraries, to name changes in their terms.
 

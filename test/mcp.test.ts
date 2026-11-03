@@ -47,7 +47,7 @@ test('mcp: view_page, list_states, capture_states, find_changes, create_review, 
             assert.ok(!shot.isError, textOf(shot));
         }
         assert.match(textOf(await client.callTool({ name: 'find_changes', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /column "Refund"/);
-        assert.match(textOf(await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /\.redlines\/review\/index\.html/);
+        assert.match(textOf(await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after' } })), /\.redlines[\\/]review[\\/]index\.html/);
         assert.match(textOf(await client.callTool({ name: 'export_design', arguments: { from: '.redlines/after' } })), /project\/list\.dc\.html/);
 
         const outside = await client.callTool({ name: 'create_review', arguments: { before: '.redlines/before', after: '.redlines/after', out: '../../elsewhere' } });
