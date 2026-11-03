@@ -75,14 +75,14 @@ Run it from the project folder: every path the tools read or write stays inside 
 
 | Tool | What it does |
 | --- | --- |
-| `look` | Opens a page of the running app (steps and mocks optional) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing. |
-| `config` | The project's states (`redlines.config.*`), or how to write the config. |
-| `shoot` | One version of the app, every state, into a folder. |
-| `compare` | The changes between two shot folders. |
-| `report` | The review page for two shot folders. |
-| `export` | Editable design files of a shot folder (Claude Design canvas or HTML). |
+| `view_page` | Opens a page of the running app (steps and mocks optional) and returns a screenshot, an outline of what is on screen and any page errors. Writes nothing. |
+| `list_states` | The project's states (`redlines.config.*`), or how to write the config. |
+| `capture_states` | One version of the app, every state, into a folder. |
+| `find_changes` | The changes between two captured folders. |
+| `create_review` | The review page for two captured folders. |
+| `export_design` | Editable design files of a captured folder (Claude Design canvas or HTML). |
 
-The server tells the agent when to use them: `look` at every page it changed before saying it is done; to show a change, shoot the app before (main branch) and after (its working copy), compare, and hand over the report.
+The server tells the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, shoot the app before (main branch) and after (its working copy), compare, and hand over the report.
 
 ## Config
 

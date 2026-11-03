@@ -19,13 +19,13 @@ const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.met
 const INSTRUCTIONS = `redlines shows what a UI change does to the pages, state by state.
 
 Use it whenever you change UI code:
-1. See your work. After changing a page, call \`look\` on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use \`steps\` to reach dialogs, menus and filled-in forms, and \`mocks\` for data states (an empty list, an error).
+1. See your work. After changing a page, call \`view_page\` on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use \`steps\` to reach dialogs, menus and filled-in forms, and \`mocks\` for data states (an empty list, an error).
 2. Show the change to people (designers, PMs, reviewers):
-   - \`config\` tells you which states the project already lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
+   - \`list_states\` tells you which states the project already lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
    - You need the app running twice: before the change (usually the main branch: a second checkout, e.g. \`git worktree add\`, with its own dev server on another port) and after it (your working copy). If you don't know how to run the app, ask the user for the two URLs.
-   - \`shoot\` the before URL into one folder and the after URL into another (same config), then \`compare\` them. Check the change list matches what you meant to change: anything you did not intend is worth telling the user about.
-   - \`report\` writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
-   - \`export\` gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages).
+   - \`capture_states\` with the before URL into one folder and the after URL into another (same config), then \`find_changes\` between them. Check the change list matches what you meant to change: anything you did not intend is worth telling the user about.
+   - \`create_review\` writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
+   - \`export_design\` gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages).
 Folders default to .redlines/ in the project. Paths must stay inside the project.`;
 
 /** The project folder, and a path inside it (relative paths are from the project). */
@@ -53,8 +53,8 @@ const httpUrl = z.string().url().refine(u => /^https?:\/\//.test(u), 'an http(s)
 export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd() } = {}) {
     const server = new McpServer({ name: 'redlines', version: VERSION }, { instructions: INSTRUCTIONS });
 
-    server.registerTool('look', {
-        title: 'Look at a page',
+    server.registerTool('view_page', {
+        title: 'View a page',
         description: 'Open a page of the running app (optionally doing steps first: click, fill, press, hover, select, waitFor, wait) and return a screenshot, an outline of what is on screen (components, buttons, links, text) and any page errors. Writes nothing.',
         inputSchema: {
             url: httpUrl.describe('The page, e.g. http://localhost:3000/orders'),
@@ -77,8 +77,8 @@ export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(p
         } catch (e) { return fail(e); }
     });
 
-    server.registerTool('config', {
-        title: 'The states to shoot',
+    server.registerTool('list_states', {
+        title: 'List the states to capture',
         description: "Read the project's redlines config (redlines.config.mjs/.js/.json in the project folder): its file, base URL and states. Without one, returns how to write it.",
         inputSchema: { file: z.string().optional().describe('A config file in the project, if not the default name.') },
         annotations: { readOnlyHint: true },
@@ -86,7 +86,7 @@ export function createServer({ root = process.env.REDLINES_ROOT ? path.resolve(p
         try {
             const config = await loadConfig(file ? inProject(root, file) : undefined, root);
             const states = Object.entries(config.states).map(([name, s]) => `  ${name}: ${s.title ?? name} — ${s.path ?? '/'}${s.steps?.length ? `, ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}${s.mocks ? `, mocks ${Object.keys(s.mocks).join(', ')}` : ''}`);
-            return text(`${path.relative(root, config.file)}\nbaseURL: ${config.baseURL ?? '(none: pass base to shoot)'}\nglobal mocks: ${Object.keys(config.mocks ?? {}).join(', ') || 'none'}\nstates:\n${states.join('\n')}`);
+            return text(`${path.relative(root, config.file)}\nbaseURL: ${config.baseURL ?? '(none: pass base to capture_states)'}\nglobal mocks: ${Object.keys(config.mocks ?? {}).join(', ') || 'none'}\nstates:\n${states.join('\n')}`);
         } catch (e) {
             if (!/No config/.test(e.message)) return fail(e);
             return text(`No redlines config in ${root}. Write redlines.config.mjs there, for example:
@@ -106,9 +106,9 @@ State names are letters, digits, - and _. Steps: click, fill [selector, text], p
         }
     });
 
-    server.registerTool('shoot', {
-        title: 'Shoot one version of the app',
-        description: "Open each state in the config at `base` (one running version of the app) and save its page tree, screenshot and standalone HTML into `out`. Shoot the version before the change and the one after it into two folders, then compare.",
+    server.registerTool('capture_states', {
+        title: 'Capture one version of the app',
+        description: "Open each state in the config at `base` (one running version of the app) and save its page tree, screenshot and standalone HTML into `out`. Capture the version before the change and the one after it into two folders, then call find_changes.",
         inputSchema: {
             base: httpUrl.describe('Where this version runs, e.g. http://localhost:3000'),
             out: z.string().describe('Folder in the project, e.g. .redlines/before or .redlines/after'),
@@ -126,9 +126,9 @@ State names are letters, digits, - and _. Steps: click, fill [selector, text], p
         } catch (e) { return fail(e); }
     });
 
-    server.registerTool('compare', {
-        title: 'What changed',
-        description: 'Compare two shot folders (before, after) and list, per state, each change: added, removed or changed, where on the page, what it holds now and before, style changes property by property.',
+    server.registerTool('find_changes', {
+        title: 'Find what changed',
+        description: 'Compare two captured folders (before, after) and list, per state, each change: added, removed or changed, where on the page, what it holds now and before, style changes property by property.',
         inputSchema: { before: z.string(), after: z.string() },
         annotations: { readOnlyHint: true },
     }, async ({ before, after }) => {
@@ -140,9 +140,9 @@ State names are letters, digits, - and _. Steps: click, fill [selector, text], p
         } catch (e) { return fail(e); }
     });
 
-    server.registerTool('report', {
-        title: 'Write the review page',
-        description: 'Write a review page for two shot folders: each state before and after side by side, every change boxed and numbered, and the list of changes. Returns the path of its index.html.',
+    server.registerTool('create_review', {
+        title: 'Create the review page',
+        description: 'Write a review page for two captured folders: each state before and after side by side, every change boxed and numbered, and the list of changes. Returns the path of its index.html.',
         inputSchema: { before: z.string(), after: z.string(), out: z.string().optional().describe('Default .redlines/report'), title: z.string().max(200).optional() },
     }, async ({ before, after, out, title }) => {
         try {
@@ -153,9 +153,9 @@ State names are letters, digits, - and _. Steps: click, fill [selector, text], p
         } catch (e) { return fail(e); }
     });
 
-    server.registerTool('export', {
+    server.registerTool('export_design', {
         title: 'Export editable designs',
-        description: 'Export the states of a shot folder as editable design files: "dc" writes a Claude Design canvas (project/canvas.json and one artboard per state) to publish; "html" copies the standalone pages.',
+        description: 'Export the states of a captured folder as editable design files: "dc" writes a Claude Design canvas (project/canvas.json and one artboard per state) to publish; "html" copies the standalone pages.',
         inputSchema: { shots: z.string(), out: z.string().optional().describe('Default .redlines/design'), format: z.enum(['dc', 'html']).optional(), title: z.string().max(200).optional() },
     }, async ({ shots, out, format, title }) => {
         try {
