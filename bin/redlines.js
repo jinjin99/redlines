@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { diffTrees, formatChanges } from '../src/diff.js';
+import { exportStates } from '../src/export.js';
 import { compareFolders, writeReport } from '../src/report.js';
 import { loadConfig, shoot } from '../src/shoot.js';
 
@@ -15,6 +16,8 @@ const HELP = `redlines — see what a UI change does, state by state
       the changes between two shots (folders from shoot, or two tree .json files)
   redlines report <before> <after> --out <dir> [--title <text>]
       a review page: before and after side by side, each change boxed and numbered
+  redlines export <shots> --out <dir> [--format html|dc] [--title <text>]
+      the states as editable design files: standalone HTML, or a Claude Design canvas (dc)
 `;
 
 const [command, ...rest] = process.argv.slice(2);
@@ -59,6 +62,12 @@ async function main() {
             const file = writeReport(states, path.resolve(flags.out), { title: flags.title });
             const total = states.reduce((n, s) => n + s.changes.length, 0);
             console.log(`${file}: ${total} change${total === 1 ? '' : 's'} in ${states.filter(s => s.status !== 'same').length} of ${states.length} states`);
+            return;
+        }
+        case 'export': {
+            if (args.length !== 1 || !flags.out) throw new Error('export <shots> --out <dir> [--format html|dc]');
+            const { files, notes } = exportStates(args[0], path.resolve(flags.out), { format: flags.format ?? 'html', title: flags.title });
+            console.log(`${files.length} file${files.length === 1 ? '' : 's'} in ${path.resolve(flags.out)}:\n  ${files.join('\n  ')}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}`);
             return;
         }
         default:

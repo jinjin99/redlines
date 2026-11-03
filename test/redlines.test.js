@@ -107,3 +107,31 @@ test('React: components are named, with their props', async () => {
     assert.match(text, /was: <Badge tone="info"> "Trial"/);
     assert.match(text, /added in App › Card › actions, after "Upgrade": <Button> "Cancel plan"/);
 });
+
+test('shoot: each state frozen as standalone HTML that renders like the page', async () => {
+    const { after } = await fixtureShots();
+    const manifest = JSON.parse(fs.readFileSync(path.join(after, 'manifest.json'), 'utf8'));
+    for (const s of manifest.states) {
+        assert.ok(s.fidelity > 0.999, `${s.name}: ${s.fidelity}`);
+        const html = fs.readFileSync(path.join(after, s.html), 'utf8');
+        assert.doesNotMatch(html, /<script/);
+        assert.match(html, /Refund/);
+    }
+    // The dialog state keeps the dialog open.
+    assert.match(fs.readFileSync(path.join(after, 'details.html'), 'utf8'), /class="dialog open"/);
+});
+
+test('export: a Claude Design canvas, one artboard per state', async () => {
+    const { exportStates } = await import('../src/export.js');
+    const { after, out } = await fixtureShots();
+    const dir = path.join(out, 'dc');
+    const { files } = exportStates(after, dir, { format: 'dc', title: 'Orders' });
+    assert.deepEqual(files, ['project/canvas.json', 'project/list.dc.html', 'project/details.dc.html']);
+    const index = JSON.parse(fs.readFileSync(path.join(dir, 'project/canvas.json'), 'utf8'));
+    assert.deepEqual(index.order, ['list.dc.html', 'details.dc.html']);
+    assert.ok(index.boards['details.dc.html'].x > index.boards['list.dc.html'].x);
+    const board = fs.readFileSync(path.join(dir, 'project/list.dc.html'), 'utf8');
+    assert.match(board, /<script src="\.\/support\.js"><\/script>/);
+    assert.match(board, /<x-dc>[\s\S]*<helmet>[\s\S]*<\/helmet>[\s\S]*Refund[\s\S]*<\/x-dc>/);
+    assert.match(board, /class Component extends DCLogic/);
+});

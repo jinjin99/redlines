@@ -57,6 +57,7 @@ The report is a folder of static files: open it locally, or put it on any static
 | `redlines shoot --out <dir> [--base <url>] [--config <file>] [state…]` | Opens each state, does its steps, waits for the page to settle, and writes `<state>.json` (the page tree) and `<state>.png` (a full-page screenshot) into `<dir>`, with a `manifest.json`. Name states to shoot only those. |
 | `redlines diff <before> <after> [--json]` | The changes between two shot folders, state by state (or between two `.json` page trees). `--json` for tools and AI agents. |
 | `redlines report <before> <after> --out <dir> [--title <text>]` | The review page: `index.html`, the screenshots, and `changes.json`. |
+| `redlines export <shots> --out <dir> [--format html\|dc] [--title <text>]` | The states as editable design files. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. |
 
 ## Config
 
@@ -95,7 +96,9 @@ Animations and transitions are turned off and the caret hidden while shooting, s
 }
 ```
 
-Only what is on screen is in it: hidden elements, screen-reader-only text and invisible measuring copies are left out, since changing them changes nothing anyone sees.
+`shoot` also freezes each state as `<state>.html`: the page as rendered, with every stylesheet it could read inlined, same-origin images as data URLs, and no scripts. It is opened again and compared with the screenshot pixel by pixel; the share that matches is `fidelity` in `manifest.json`. That file is what `export` builds on.
+
+Only what is on screen is in the page tree: hidden elements, screen-reader-only text and invisible measuring copies are left out, since changing them changes nothing anyone sees.
 
 `changes.json` (from `report`, or `diff --json`) lists, per state, each change: `kind` (`added`, `removed`, `changed`), `where` (the named elements it is in and the text just before it), `now` and `was` (what it holds: components, interactive elements and text), `styles` (for a restyle: each property, before and after), `count` (one change repeated, like a cell in every row) and `boxes.before` / `boxes.after` (where it is on each page).
 
@@ -111,9 +114,9 @@ Each tree is read into a sequence (an element opening, its text, its closing), t
 
 ## Status
 
-Early. What works today: shooting states of any web app with Playwright, mocked APIs, React component names and props, the change list, and the review page. Planned:
+Early. What works today: shooting states of any web app with Playwright, mocked APIs, React component names and props, the change list, the review page, and editable exports (HTML, Claude Design). Planned:
 
-- Exporting states as editable design files (to keep adjusting a design from what the code renders).
+- More export targets for the editable states (Figma).
 - A GitHub Action that shoots both sides of a PR and comments with the review page.
 - Reusing the mocks an app already has (MSW handlers).
 - Presets for component libraries, to name changes in their terms.

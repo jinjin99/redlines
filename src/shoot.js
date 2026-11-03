@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { launch } from './browser.js';
+import { freeze } from './page/freeze.js';
 import { snapshot } from './page/snapshot.js';
 
 const CONFIG_NAMES = ['redlines.config.mjs', 'redlines.config.js', 'redlines.config.json'];
@@ -46,6 +47,23 @@ async function step(page, s) {
     throw new Error(`Unknown step ${JSON.stringify(s)}: click, fill, press, hover, select, waitFor, wait, or a function (page) => …`);
 }
 
+/** Share of pixels that differ between two PNGs (any channel by more than 16), measured in `page`. */
+export async function pixelDiff(page, a, b) {
+    return page.evaluate(
+        async ([x, y]) => {
+            const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+            const [p, q] = await Promise.all([load(x), load(y)]);
+            const w = Math.max(p.width, q.width), h = Math.max(p.height, q.height);
+            const px = img => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.drawImage(img, 0, 0); return g.getImageData(0, 0, w, h).data; };
+            const A = px(p), B = px(q);
+            let d = 0;
+            for (let i = 0; i < A.length; i += 4) if (Math.abs(A[i] - B[i]) > 16 || Math.abs(A[i + 1] - B[i + 1]) > 16 || Math.abs(A[i + 2] - B[i + 2]) > 16 || A[i + 3] !== B[i + 3]) d++;
+            return d / (w * h);
+        },
+        [`data:image/png;base64,${a.toString('base64')}`, `data:image/png;base64,${b.toString('base64')}`]
+    );
+}
+
 // Still pictures: no animation, transition or blinking caret between two shots.
 const STILL = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}';
 
@@ -83,9 +101,26 @@ export async function shoot({ config, base, out, only, log = console.log }) {
                 const tree = await page.evaluate(snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
-                await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
-                results.push({ name, ok: true, errors });
-                log(`ok   ${name}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
+                const shot = await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
+                // The page as one editable HTML file, checked against the screenshot: opened again, how much differs.
+                let fidelity = null;
+                if (config.html !== false) {
+                    const html = await page.evaluate(freeze);
+                    fs.writeFileSync(path.join(out, `${name}.html`), html);
+                    const check = await context.newPage();
+                    try {
+                        await check.setContent(html, { waitUntil: 'load' });
+                        await check.addStyleTag({ content: STILL });
+                        await check.evaluate(() => document.fonts?.ready);
+                        await check.waitForTimeout(100);
+                        fidelity = 1 - (await pixelDiff(check, shot, await check.screenshot({ fullPage: true })));
+                    } finally {
+                        await check.close();
+                    }
+                }
+                results.push({ name, ok: true, errors, fidelity });
+                const same = fidelity === null ? '' : `  html ${(fidelity * 100).toFixed(2)}% the same as the page`;
+                log(`ok   ${name}${same}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
             } catch (error) {
                 results.push({ name, ok: false, error: error.message.split('\n')[0] });
                 log(`FAIL ${name}: ${error.message.split('\n')[0]}`);
@@ -96,7 +131,7 @@ export async function shoot({ config, base, out, only, log = console.log }) {
     } finally {
         await browser.close();
     }
-    const manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png` })) };
+    const manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity.toFixed(4)) }) })) };
     // Shooting some states adds to what the folder had.
     const file = path.join(out, 'manifest.json');
     if (only?.length && fs.existsSync(file)) {

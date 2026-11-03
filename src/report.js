@@ -15,7 +15,7 @@ export function compareFolders(beforeDir, afterDir) {
         if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: shoot into it first (redlines shoot --out ${dir})`);
         const m = readJson(file);
         // Files are named after their state, in the folder itself: nothing else is read.
-        for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png`) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
+        for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png` || (s.html && s.html !== `${s.name}.html`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
         return m;
     };
     const a = manifest(beforeDir), b = manifest(afterDir);
