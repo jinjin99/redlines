@@ -157,7 +157,7 @@ function worker() {
                     if (++done % 20 === 0) report();
                 }
             };
-            await Promise.all(Array.from({ length: 24 }, next));
+            await Promise.all(Array.from({ length: 64 }, next));
             report();
             source?.postMessage({ type: 'ready', id });
         })());
@@ -208,6 +208,11 @@ function worker() {
         const body = file ? await ((await (await files(id)).match(file)) ?? (await fetch(file))).arrayBuffer() : null;
         return new Response([204, 304].includes(hit.status) ? null : body, { status: hit.status === 304 ? 200 : hit.status, headers: hit.headers });
     }
+}
+
+/** sw.js: the worker, with the functions it shares with this module. */
+export function workerScript(): string {
+    return `// redlines prototypes: answers the pages opened from /p/<id>/ from their recording; anything else goes to the network.\n${chooseAnswer.toString()}\n${readsOnly.toString()}\n(${worker.toString()})();\n`;
 }
 
 export interface PrototypeResult {
@@ -330,7 +335,7 @@ export async function buildPrototype({ config, base, out, id, start, only, skip,
         const index: PrototypeIndex = { origin, start: config.states[first].path ?? '/', answers, writes: [...writes] };
         fs.writeFileSync(path.join(dir, 'r', 'index.json'), JSON.stringify(index));
         fs.writeFileSync(path.join(dir, 'index.html'), ENTRY(id, index.start));
-        fs.writeFileSync(path.join(out, 'sw.js'), `// redlines prototypes: answers the pages opened from /p/<id>/ from their recording; anything else goes to the network.\n${chooseAnswer.toString()}\n${readsOnly.toString()}\n(${worker.toString()})();\n`);
+        fs.writeFileSync(path.join(out, 'sw.js'), workerScript());
         const files = fs.readdirSync(path.join(dir, 'r')).length + 2;
         return { walks: results, files, bytes, secrets, entry: `/p/${id}/` };
     } finally {
