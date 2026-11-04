@@ -74,6 +74,7 @@ The same tools, by the same names and inputs, on the command line (`redlines <to
 | `create_review --before <dir> --after <dir> [--out <dir>] [--title <text>]` | The review page: `index.html`, the screenshots and `changes.json` (default `.redlines/review`). |
 | `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. Both link the states where a click leads, so the pages click through (Play on the canvas). See [Designing with it](#designing-with-it). |
 | `find_design_edits --edited <dir> [--exported <dir>] [--json]` | What a designer changed on an exported canvas: the artboards as exported (default `.redlines/design`) against the same files read back after they edited them, as the same list of changes `find_changes` gives. Artboards they added come with an outline. |
+| `build_prototype --base <url> --id <name> [--out <dir>] [--start <state>] [--states <names>] [--skip <regex>] [--skipCheck]` | A clickable prototype of the running app that needs no server: each state's walk recorded, played back by a service worker, in a folder to put on any static host. See [Prototypes](#prototypes). `redlines serve [<dir>]` opens one on localhost. |
 
 Every path a tool reads or writes is inside the project folder (the current directory, or `REDLINES_ROOT`).
 
@@ -176,6 +177,22 @@ The same captures make a design to work on: a requirement drafted in the real co
 4. **Back to code.** Read the edited artboards into a folder in the project (same file names) and `find_design_edits --edited <folder>` lists each edit against the export: where it is, what it says now and before, styles property by property. The agent carries them into the code, through the project's components and tokens, then captures and exports again; the canvas then shows the code, edits included. Text that came from the page's data (an API answer: a customer's name, a product title) is marked `! not code`, with the request and key it came from: that edit belongs in the data or configuration, not the code.
 
 The baseline for the designer's edits is the export itself (`.redlines/design`), so nothing else is stored: no database, no server. Exporting again makes the new export the baseline.
+
+## Prototypes
+
+The canvas shows each state; a prototype is the app itself, to click through. `build_prototype` walks the states at `base` (logged in, with the config's data) and keeps everything the browser is given: the pages, scripts, styles, fonts, the API's answers and the config's mocks. A service worker plays them back, so the app runs again with no server, no backend and no login, in anyone's browser.
+
+```bash
+redlines build_prototype --base http://localhost:3000 --id claim-reopen
+redlines serve                      # http://127.0.0.1:8790/p/claim-reopen/ to try it here
+```
+
+- **Where it goes.** `.redlines/prototype/` holds `sw.js` and `p/<id>/`. Upload the whole folder to the root of a static host on its own (sub)domain, over https (an S3 bucket, GitHub Pages, Netlify), and share `<host>/p/<id>/`. Several prototypes share a host, each under its own `p/<id>/`. The worker answers only pages opened from a prototype's entry, so whatever else the host serves is left alone.
+- **What can be clicked** is what the walks did: each state's steps, and each of its `links`. A click the walks never made (another button, another row) finds nothing recorded.
+- **Writes.** A request that changes data (a POST the config mocks or the recording answers; GraphQL queries are reads) moves the prototype on: afterwards the pages get the answers recorded after it, so "Reopen" then shows the reopened claim. Opening the entry starts it over.
+- **Checked offline.** After building, each walk is played on the folder with every other address cut off; what the app asked for that was not recorded is listed.
+- **Keep it private.** Login secrets in the pages and answers are blanked (tokens become `redacted`, a JWT loses its signature), but the folder holds the app's code and its data: put it on hosts only your team can reach.
+- The first visit downloads the prototype into the browser (a large app is tens of MB); later clicks answer from there. Recorded on localhost, so code that acts on the real domain (a cookie banner shown only there) may ask for things that were not recorded.
 
 ## For coding agents (MCP)
 

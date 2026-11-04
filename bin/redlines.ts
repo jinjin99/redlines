@@ -28,6 +28,7 @@ function help() {
         lines.push(`  ${t.name} ${inputs.join(' ')}`, `      ${t.description}`, '');
     }
     for (const p of PROMPTS) lines.push(`  prompt ${p.name} ${Object.keys(p.args).map(k => `--${k} <${k}>`).join(' ')}`, `      ${p.description} Prints the steps for an agent.`, '');
+    lines.push('  serve [<folder>] [--port <port>]', '      Serve a built prototype (build_prototype; default .redlines/prototype) on localhost until Ctrl-C, to click through it before uploading it.', '');
     lines.push('  mcp', '      Serve these tools over stdio for coding agents: claude mcp add redlines -- npx -y github:jinjin99/redlines mcp');
     return lines.join('\n');
 }
@@ -77,6 +78,20 @@ async function main() {
         if (!prompt) throw new Error(`prompt ${PROMPTS.map(p => p.name).join(' | ')}`);
         const args = parse({ name: `prompt ${prompt.name}`, input: prompt.args } as Tool, argv.slice(1)) as Record<string, string>;
         console.log(prompt.text(args));
+        return;
+    }
+    if (command === 'serve') {
+        const { serveFolder } = await import('../src/prototype.js');
+        const { inProject } = await import('../src/tools.js');
+        const root = process.env.REDLINES_ROOT ? path.resolve(process.env.REDLINES_ROOT) : process.cwd();
+        const at = argv.indexOf('--port');
+        const port = at >= 0 ? Number(argv[at + 1]) : 8790;
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('--port is a number from 1024 to 65535');
+        const dir = inProject(root, argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port'), '.redlines/prototype');
+        const ids = fs.existsSync(path.join(dir, 'p')) ? fs.readdirSync(path.join(dir, 'p')) : [];
+        if (!ids.length) throw new Error(`No prototype in ${dir}: build_prototype first`);
+        const served = await serveFolder(dir, port);
+        console.log(`${ids.map(id => `${served.url}/p/${id}/`).join('\n')}\n(Ctrl-C to stop)`);
         return;
     }
     const tool = TOOLS.find(t => t.name === command);

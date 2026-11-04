@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Prototypes** (`build_prototype`, `redlines serve`): the running app, clickable with no server. Each state's walk (its steps and its links) is recorded whole, login secrets blanked, and a service worker plays it back from a folder for any static host; a write (a mocked or recorded POST) moves it on to what was recorded after it. Several prototypes can share a host with other content: the worker answers only pages opened from a prototype's entry. Each walk is played on the folder offline after building.
 - **Log in once.** A login is kept per machine and host (`~/.redlines/auth/<host>.json`), shared by every project, worktree and port, and every run writes back what the app refreshed, so it no longer expires with the app's first token. Logins kept in a project by an older redlines move there on first use.
 - Component props holding an id made up on each render (React's `useId`, react-aria's ids) are left out of the page tree: they differ on every load and made every captured field look changed.
 

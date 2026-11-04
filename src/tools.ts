@@ -13,6 +13,7 @@ import { formatChanges } from './diff.js';
 import { findDesignEdits } from './edits.js';
 import { exportDesign } from './export.js';
 import { outline } from './outline.js';
+import { buildPrototype, checkPrototype } from './prototype.js';
 import { findChanges, writeReport } from './report.js';
 
 /** What a tool gives back: text, a screenshot for view_page, and whether it failed part way. */
@@ -42,7 +43,8 @@ Use it whenever you change UI code:
    - capture_states with the before URL into one folder and with the after URL into another (same config), then find_changes between them. Check the list matches what you meant to change: anything you did not intend is worth telling the user about.
    - create_review writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
    - export_design gives editable design files of the states (format "dc": a Claude Design canvas; "html": standalone pages). States link to each other where a click leads (a state whose steps continue another's, and a state's links in the config), so the pages can be clicked through, or played on the canvas.
-3. Work with a designer: the draft_design prompt walks it (a requirement drafted in code, exported as a canvas they edit and play through). When they have edited the canvas, read its artboards back into a folder and call find_design_edits against the export: carry each edit into the code, then capture and export again.
+3. A clickable prototype (the app itself, for people who can't run it): build_prototype walks the states and writes a folder for a static host; give the user the folder and the address to open (<host>/p/<id>/).
+4. Work with a designer: the draft_design prompt walks it (a requirement drafted in code, exported as a canvas they edit and play through). When they have edited the canvas, read its artboards back into a folder and call find_design_edits against the export: carry each edit into the code, then capture and export again.
 Folders default to .redlines/ in the project. Paths must stay inside the project.`;
 
 /** A path inside the project (relative paths are from the project); anything else is refused. */
@@ -235,6 +237,38 @@ export const TOOLS: Tool[] = [
             const parts = boards.filter(b => b.status !== 'same').map(b => `### ${b.title || b.file} (${b.file})\n${b.status === 'changed' ? formatChanges(b.changes) : b.status === 'added' ? `a new artboard on the canvas:\n${b.outline}` : 'removed from the canvas'}`);
             const same = boards.filter(b => b.status === 'same').map(b => b.file);
             return { text: `${parts.join('\n\n') || 'no edits'}${same.length ? `\n\nnot edited: ${same.join(', ')}` : ''}` };
+        },
+    },
+    {
+        name: 'build_prototype',
+        title: 'Build a clickable prototype',
+        description: 'Walk the states at `base` (logged in, with the config\'s data: mocks, MSW or the recording) and keep everything the browser is given, so the app runs again with no server: a folder with sw.js at its root and the prototype under p/<id>/. Put the whole folder on a static host at the root of its own (sub)domain, served over https (several prototypes share one host, each under its own p/<id>/; the worker leaves the host\'s other pages alone), and share <host>/p/<id>/. What viewers can click is what the walks did: each state\'s steps, and each of its links in the config; requests to change data answer as they did while walking, and the pages show what was recorded after them. Login secrets in the pages and answers are blanked, but the folder holds the app\'s code and its data: keep it on hosts only your team can reach. Then each walk is played on the folder with the network cut off (skipCheck to skip it).',
+        input: {
+            base: httpUrl.describe('Where the app runs (the version to prototype), e.g. http://localhost:3000'),
+            id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/).describe('The prototype\'s name in its address, e.g. claim-reopen (lowercase letters, digits, dashes)'),
+            out: z.string().optional().describe('The folder to upload (default .redlines/prototype); other prototypes in it are kept'),
+            start: z.string().optional().describe('The state it opens on (default: the first walked)'),
+            states: z.array(z.string()).optional().describe('Only these states (default: all).'),
+            skip: z.string().max(500).optional().describe('A regular expression of addresses to leave out (more analytics or widgets; common ones are left out already)'),
+            skipCheck: z.boolean().optional().describe('Do not play the walks on the built folder afterwards'),
+            config: z.string().optional().describe('A config file in the project, if not the default name.'),
+        },
+        annotations: { openWorldHint: true },
+        async run({ base, id, out, start, states, skip, skipCheck, config: file }, { root, log }) {
+            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
+            const dir = inProject(root, out, '.redlines/prototype');
+            if (dir.startsWith(path.join(root, '.redlines'))) workDir(root);
+            const built = await buildPrototype({ config, base, out: dir, id, start, only: states, skip, root, log: log ?? (() => {}) });
+            const lines = [`${path.relative(root, dir)}: ${built.files} files, ${(built.bytes / 1e6).toFixed(1)} MB; ${built.secrets} login secrets blanked`, ...built.walks.map(w => (w.ok ? `recorded ${w.name}` : `FAIL     ${w.name}: ${w.error}`))];
+            let failed = built.walks.some(w => !w.ok);
+            if (!skipCheck) {
+                const played = await checkPrototype({ config, out: dir, id, only: states });
+                lines.push('played offline:', ...played.walks.map(w => (w.ok ? `  ok   ${w.name}` : `  FAIL ${w.name}: ${w.error}`)));
+                if (played.offline.length) lines.push(`  asked for and not in the recording (cut off): ${played.offline.join(', ')}`);
+                failed ||= played.walks.some(w => !w.ok);
+            }
+            lines.push(`Upload the whole folder to the root of a static host on its own (sub)domain, over https, and open <host>${built.entry}. To click through it here first: redlines serve ${path.relative(root, dir)}.`);
+            return { text: lines.join('\n'), isError: failed };
         },
     },
     {

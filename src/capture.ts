@@ -46,7 +46,8 @@ async function fulfill(route: Route, answer: MockAnswer) {
     return route.fulfill({ status: full.status ?? 200, headers: full.headers, contentType: full.json !== undefined ? 'application/json' : full.contentType, body: full.json !== undefined ? JSON.stringify(full.json) : full.body ?? '' });
 }
 
-async function step(page: Page, s: Step): Promise<unknown> {
+/** Does one step of a state on the page. */
+export async function step(page: Page, s: Step): Promise<unknown> {
     if (typeof s === 'function') return s(page);
     if ('click' in s) return page.locator(s.click).first().click();
     if ('fill' in s) {
@@ -113,6 +114,8 @@ export interface OpenOptions {
     recorder?: Recorder;
     /** Collects the strings in the page's API answers. */
     data?: DataWatcher;
+    /** Keeps everything the page is given (documents, scripts, styles, answers) in this HAR, written when the context closes (build_prototype). */
+    har?: string;
 }
 
 /** Waits until the page's address has stayed the same for a second (an app that sends itself on after loading), up to `max` ms. */
@@ -146,8 +149,8 @@ export async function evaluateSettled<R, A>(page: Page, fn: (arg: A) => R | Prom
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder, data }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
-    const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState });
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder, data, har }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState, ...(har ? { recordHar: { path: har, content: 'embed' as const } } : {}) });
     const page = await context.newPage();
     if (now) {
         const at = new Date(now);
