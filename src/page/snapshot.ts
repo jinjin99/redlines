@@ -80,6 +80,8 @@ export function snapshot(opts: { styleKeys?: string[]; ignore?: string | null } 
         for (const k of Object.keys(all)) {
             const v = all[k];
             if (k === 'children' || k === 'key' || k === 'ref' || k === 'className' || k === 'style' || k === 'id' || /^(on[A-Z]|data-|aria-)/.test(k)) continue;
+            // An id React makes up on each render (useId: ":r1a:", ":R6dr6mim:", "«r1»"): different every load, nothing a person sees.
+            if (typeof v === 'string' && /:[rR][0-9a-zA-Z]*:|«r[0-9a-z]+»/.test(v)) continue;
             if (typeof v === 'string' ? v.length <= 80 : typeof v === 'number' || typeof v === 'boolean') {
                 out[k] = v as string | number | boolean;
                 if (++n >= 8) break;

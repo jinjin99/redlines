@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Component props holding an id made up on each render (React's `useId`, react-aria's ids) are left out of the page tree: they differ on every load and made every captured field look changed.
+
 ## 0.3.0
 
 Found running a real server-rendered app (a dev server, then its production build) through the whole design round trip.

@@ -115,6 +115,8 @@ test('React: components are named, with their props', async () => {
     assert.match(text, /added in App › Card › actions, after "Upgrade": <Button> "Cancel plan"/);
     // A minified component name (Xq) is no name: it neither shows nor makes builds differ.
     assert.doesNotMatch(text, /Xq/);
+    // Nor does an id made up on each render.
+    assert.doesNotMatch(text, /labelId|react-aria/);
 });
 
 test('shoot: each state frozen as standalone HTML that renders like the page', async () => {
