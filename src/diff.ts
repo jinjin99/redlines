@@ -267,6 +267,9 @@ export function diffTrees(before: PageTree, after: PageTree): Change[] {
     for (const r of align(a.map(key), b.map(key))) {
         if (r.op === 'equal') continue;
         const was = a.slice(r.a0, r.a1), now = b.slice(r.b0, r.b1);
+        // Nothing to see on either side (empty elements of no size, like a portal's mount point): not a change a person would notice.
+        const unseen = (ts: Token[]) => ts.every(t => t.kind === 'close' || (t.kind === 'open' && t.box[2] * t.box[3] === 0));
+        if (unseen(was) && unseen(now)) continue;
         const kind = ({ insert: 'added', delete: 'removed', replace: 'changed' } as const)[r.op as 'insert' | 'delete' | 'replace'] satisfies ChangeKind;
         const at = now.length ? where(b, r.b0) : where(a, r.a0);
         // In a table, by column: a column added is its heading and a cell in every row, one change.

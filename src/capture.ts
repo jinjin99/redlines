@@ -182,6 +182,12 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
             throw new Error(`the app sent ${asked.pathname} to a login page (${landed.origin}${landed.pathname}): log in first (log_in --url ${asked.origin})${storageState ? ', the login kept before has expired' : ''}`);
         }
         await page.addStyleTag({ content: STILL });
+        // A server-rendered page shows before its scripts take over, and a click then does nothing:
+        // steps wait for the network to go quiet first (as far as it does).
+        if (steps.length) {
+            await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+            await addressSettled(page, 5000);
+        }
         page.setDefaultTimeout(stepTimeout);
         for (const [i, s] of steps.entries()) {
             try {

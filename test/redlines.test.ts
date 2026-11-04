@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 import { align, diffTrees, formatChanges } from '../src/diff.js';
 import { findChanges, writeReport } from '../src/report.js';
-import type { Config, PageTree, TreeElement, TreeNode, TreeText } from '../src/types.js';
+import type { Box, Config, PageTree, TreeElement, TreeNode, TreeText } from '../src/types.js';
 import { fixtureShots } from './helpers.js';
 
 const tree = (...children: TreeNode[]): PageTree => ({ version: 1, url: 'about:blank', title: '', viewport: { width: 100, height: 100 }, size: { width: 100, height: 100 }, root: { tag: 'body', style: {}, box: [0, 0, 100, 100], children } });
@@ -183,4 +183,10 @@ test('config: a key it does not know is an error, with the key meant', async () 
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('diff: elements nobody can see (no size, no text) coming and going are not changes', () => {
+    const el = (children: TreeElement[] = [], box: Box = [0, 0, 100, 20]): TreeElement => ({ tag: 'div', style: {}, box, children });
+    const page = (root: TreeElement): PageTree => ({ version: 1, url: '', title: '', viewport: { width: 100, height: 100 }, size: { width: 100, height: 100 }, root });
+    assert.deepEqual(diffTrees(page(el([el()])), page(el([el([], [0, 90, 100, 0]), el()]))), []);
 });

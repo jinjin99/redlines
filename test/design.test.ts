@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -77,4 +78,22 @@ test('find_design_edits: a designer\'s edits on the canvas, as changes', async (
     const added = boards.find(b => b.file === 'Empty.dc.html')!;
     assert.equal(added.status, 'added');
     assert.match(added.outline!, /No orders yet/);
+});
+
+test('export: inline images become files beside the artboards (a plain DOCTYPE dropped)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-img-'));
+    const svg = '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>';
+    const html = `<!doctype html><html><head><style>\n.a{background:url("data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}")}</style></head><body><img src="data:image/svg+xml,${encodeURIComponent(svg)}"></body></html>`;
+    fs.writeFileSync(path.join(dir, 'home.html'), html);
+    fs.writeFileSync(path.join(dir, 'home.json'), JSON.stringify({ viewport: { width: 400, height: 300 }, size: { width: 400, height: 300 } }));
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ tool: 'redlines', version: 1, states: [{ name: 'home', title: 'Home', tree: 'home.json', image: 'home.png', html: 'home.html' }] }));
+    const out = path.join(dir, 'design');
+    const { files, notes } = exportDesign(dir, out, { format: 'dc' });
+    const assets = files.filter(f => f.startsWith('project/assets/'));
+    assert.equal(assets.length, 1);
+    assert.deepEqual(notes, []);
+    const board = fs.readFileSync(path.join(out, 'project/home.dc.html'), 'utf8');
+    assert.ok(!board.includes('data:image'));
+    assert.ok(board.includes(`src="${assets[0].slice('project/'.length)}"`));
+    assert.ok(!fs.readFileSync(path.join(out, assets[0]), 'utf8').includes('DOCTYPE'));
 });

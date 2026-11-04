@@ -7,6 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { captureStates, recordData } from '../src/capture.js';
+import { loadRecording } from '../src/recording.js';
 import type { Config } from '../src/types.js';
 import { FIXTURES } from './helpers.js';
 
@@ -54,4 +55,12 @@ test('record the data once, then capture any version from it', async () => {
         later.close();
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('a request recorded twice answers with its successful answer (a 401 before a token refresh is skipped)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-rec-'));
+    const har = path.join(dir, 'recording.har');
+    const answer = (status: number, text: string) => ({ request: { method: 'GET', url: 'https://api.example.com/me' }, response: { status, content: { mimeType: 'application/json', text } } });
+    fs.writeFileSync(har, JSON.stringify({ log: { entries: [answer(401, '{"error":"expired"}'), answer(200, '{"name":"Ada"}'), answer(200, '{"name":"later"}')] } }));
+    assert.equal(loadRecording(har).find('GET', 'https://localhost:3000/me')?.response.content.text, '{"name":"Ada"}');
 });

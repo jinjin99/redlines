@@ -3,6 +3,7 @@
 //   dc    a Claude Design canvas: project/<state>.dc.html artboards in a row and project/canvas.json
 // Both carry the states' links (capture_states measures where each click goes): a see-through link over
 // the element, so clicking through the pages, or Play on the canvas, walks the flow.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -90,6 +91,29 @@ class Component extends DCLogic {
 `;
 }
 
+// An image as a data URL, in an attribute or a CSS url(): its type, whether base64, its data.
+const DATA_IMAGE = /data:(image\/(?:svg\+xml|png|jpeg|gif|webp));?(base64)?,([^"')\s]+)/g;
+const EXT: Record<string, string> = { 'image/svg+xml': 'svg', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+
+/** An image written once to project/assets/ (named by its content); its path from an artboard. */
+function asset(project: string, mime: string, bytes: Buffer, written: string[]): string | undefined {
+    const ext = EXT[mime];
+    if (!ext) return undefined;
+    if (ext === 'svg') {
+        // A canvas refuses XML with DTD machinery: a plain DOCTYPE goes; one defining entities stays inline.
+        const text = bytes.toString('utf8').replace(/<!DOCTYPE[^>[]*>/gi, '');
+        if (/<!(DOCTYPE|ENTITY)/i.test(text)) return undefined;
+        bytes = Buffer.from(text);
+    }
+    const name = `assets/${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}.${ext}`;
+    if (!written.includes(`project/${name}`)) {
+        fs.mkdirSync(path.join(project, 'assets'), { recursive: true });
+        fs.writeFileSync(path.join(project, name), bytes);
+        written.push(`project/${name}`);
+    }
+    return name;
+}
+
 /**
  * Writes the export; returns { files, notes }: the files written, relative to `out`, and what a person
  * has to finish by hand (a canvas takes no inline images: they are uploaded as its assets).
@@ -121,8 +145,11 @@ export function exportDesign(dir: string, out: string, { format = 'html', title 
         const width = tree.viewport.width, height = Math.max(tree.viewport.height, tree.size.height);
         const file = `${s.name}.dc.html`;
         const parts = partsOf(fs.readFileSync(path.join(dir, s.html), 'utf8'));
+        // A canvas takes no inline images: each becomes a file beside the artboards (assets/<hash>.<ext>).
+        parts.body = parts.body.replace(DATA_IMAGE, (whole, mime: string, base64: string | undefined, data: string) => asset(project, mime, base64 ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data)), written) ?? whole);
+        parts.css = parts.css.replace(DATA_IMAGE, (whole, mime: string, base64: string | undefined, data: string) => asset(project, mime, base64 ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data)), written) ?? whole);
         const inline = (parts.body.match(/src="data:/g) ?? []).length + (parts.css.match(/url\("data:/g) ?? []).length;
-        if (inline) notes.push(`${file}: ${inline} inline image${inline === 1 ? '' : 's'}; Claude Design wants images uploaded as canvas assets`);
+        if (inline) notes.push(`${file}: ${inline} inline image${inline === 1 ? '' : 's'} of a kind a canvas can't hold; upload them as canvas assets`);
         // Beside the canvas, not in it: the page text that came from data, for find_design_edits.
         if (s.data) { fs.mkdirSync(path.join(out, 'data'), { recursive: true }); fs.copyFileSync(path.join(dir, s.data), path.join(out, 'data', `${s.name}.json`)); }
         fs.writeFileSync(path.join(project, file), artboard({ title: s.title, parts, width, height, links: hotspots(s.links!, titleOf, n => `${n}.dc.html`) }));

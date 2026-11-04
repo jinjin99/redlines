@@ -96,12 +96,12 @@ export function loadRecording(file: string): Recording {
     if (!fs.existsSync(file)) throw new Error(`No recording at ${file}: record one first (record_data)`);
     const entries: Entry[] = JSON.parse(fs.readFileSync(file, 'utf8')).log?.entries ?? [];
     const exact = new Map<string, Entry>(), loose = new Map<string, Entry>();
+    // A request recorded more than once answers with its first successful answer: a 401 recorded just
+    // before the app refreshed its token is not what the page should be given.
+    const keep = (map: Map<string, Entry>, k: string, e: Entry) => { const had = map.get(k); if (!had || (had.response.status >= 400 && e.response.status < 400)) map.set(k, e); };
     for (const e of entries) {
-        const p = pathOf(e.request.url);
-        const k = `${e.request.method} ${p} ${e.request.postData?.text ?? ''}`;
-        if (!exact.has(k)) exact.set(k, e);
-        const l = `${e.request.method} ${new URL(e.request.url).pathname}`;
-        if (!loose.has(l)) loose.set(l, e);
+        keep(exact, `${e.request.method} ${pathOf(e.request.url)} ${e.request.postData?.text ?? ''}`, e);
+        keep(loose, `${e.request.method} ${new URL(e.request.url).pathname}`, e);
     }
     const find = (method: string, url: string, body?: string) => exact.get(`${method} ${pathOf(url)} ${body ?? ''}`) ?? loose.get(`${method} ${new URL(url).pathname}`);
     return {

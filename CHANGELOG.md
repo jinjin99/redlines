@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Found running a real server-rendered app (a dev server, then its production build) through the whole design round trip.
 
 - **Data or code**: `capture_states` notes which of a page's text came from its API answers (`<state>.data.json`), and `find_design_edits` marks a designer's edit to such text `! not code`, with the request and key it came from.
+- **Canvas images**: inline images become files beside the artboards (`project/assets/`), so a Claude Design canvas takes the export as it is; nothing to upload by hand.
+- **Recordings**: a request recorded more than once answers with its successful answer (a 401 recorded just before the app refreshed its token made the app log out on replay).
+- **Steps** wait for the network to go quiet first: on a server-rendered page a click before its scripts take over did nothing.
+- **Changes nobody can see** (elements of no size and no text, like a portal's mount point) are no longer listed.
 
 ## 0.2.0
 

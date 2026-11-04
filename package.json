@@ -1,6 +1,6 @@
 {
   "name": "redlines",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "See what a UI change does, state by state: before and after of every page, each change found, boxed and numbered.",
   "keywords": [
     "ui",
