@@ -167,7 +167,7 @@ The same captures make a design to work on: a requirement drafted in the real co
    ```
 
 3. **Edit.** The designer edits the canvas: copy, spacing, colours, new artboards, comments.
-4. **Back to code.** Read the edited artboards into a folder in the project (same file names) and `find_design_edits --edited <folder>` lists each edit against the export: where it is, what it says now and before, styles property by property. The agent carries them into the code, through the project's components and tokens, then captures and exports again; the canvas then shows the code, edits included.
+4. **Back to code.** Read the edited artboards into a folder in the project (same file names) and `find_design_edits --edited <folder>` lists each edit against the export: where it is, what it says now and before, styles property by property. The agent carries them into the code, through the project's components and tokens, then captures and exports again; the canvas then shows the code, edits included. Text that came from the page's data (an API answer: a customer's name, a product title) is marked `! not code`, with the request and key it came from: that edit belongs in the data or configuration, not the code.
 
 The baseline for the designer's edits is the export itself (`.redlines/design`), so nothing else is stored: no database, no server. Exporting again makes the new export the baseline.
 

@@ -15,7 +15,7 @@ function statesOf(dir: string): Frozen[] {
     if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: capture into it first`);
     const m = JSON.parse(fs.readFileSync(file, 'utf8')) as Manifest;
     const states = (m.states ?? []).filter((s): s is Frozen => !!s.html);
-    for (const s of states) if (!/^[\w-]+$/.test(s.name) || s.html !== `${s.name}.html`) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
+    for (const s of states) if (!/^[\w-]+$/.test(s.name) || s.html !== `${s.name}.html` || (s.data && s.data !== `${s.name}.data.json`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
     if (!states.length) throw new Error(`${dir} has no frozen HTML: capture without "html: false" in the config`);
     // Links only to states exported with them, with a box of four numbers.
     const names = new Set(states.map(s => s.name));
@@ -123,6 +123,8 @@ export function exportDesign(dir: string, out: string, { format = 'html', title 
         const parts = partsOf(fs.readFileSync(path.join(dir, s.html), 'utf8'));
         const inline = (parts.body.match(/src="data:/g) ?? []).length + (parts.css.match(/url\("data:/g) ?? []).length;
         if (inline) notes.push(`${file}: ${inline} inline image${inline === 1 ? '' : 's'}; Claude Design wants images uploaded as canvas assets`);
+        // Beside the canvas, not in it: the page text that came from data, for find_design_edits.
+        if (s.data) { fs.mkdirSync(path.join(out, 'data'), { recursive: true }); fs.copyFileSync(path.join(dir, s.data), path.join(out, 'data', `${s.name}.json`)); }
         fs.writeFileSync(path.join(project, file), artboard({ title: s.title, parts, width, height, links: hotspots(s.links!, titleOf, n => `${n}.dc.html`) }));
         boards[file] = { x, y: 0, w: width, h: height, title: s.title, ...(inFlow.has(s.name) ? { is_interactive: true } : {}) };
         order.push(file);

@@ -301,7 +301,8 @@ export function formatChanges(list: Change[]): string {
         .map((c, i) => {
             const now = c.now.length ? `: ${c.now.join(' | ')}` : '';
             const was = c.was.length ? `  (was: ${c.was.join(' | ')})` : '';
-            return `${i + 1}. ${c.kind}${c.count > 1 ? ` ×${c.count}` : ''} ${c.where}${now}${was}`;
+            const data = (c.data ?? []).map(d => `\n   ! not code: "${d.text}" is ${d.whole ? '' : 'part of the text, '}data from ${d.from} → ${d.key}; change the data or configuration behind it`).join('');
+            return `${i + 1}. ${c.kind}${c.count > 1 ? ` ×${c.count}` : ''} ${c.where}${now}${was}${data}`;
         })
         .join('\n');
 }

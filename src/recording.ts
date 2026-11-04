@@ -80,6 +80,7 @@ const pathOf = (url: string) => { const u = new URL(url); return u.pathname + u.
 
 export interface Recording {
     file: string;
+    entries: Entry[];
     /** For a page's request: its API requests (fetch, XHR) only. */
     lookup: (request: PlaywrightRequest) => Entry | undefined;
     /** For any request (the data proxy's). */
@@ -105,6 +106,7 @@ export function loadRecording(file: string): Recording {
     const find = (method: string, url: string, body?: string) => exact.get(`${method} ${pathOf(url)} ${body ?? ''}`) ?? loose.get(`${method} ${new URL(url).pathname}`);
     return {
         file,
+        entries,
         find,
         lookup: request => {
             const type = request.resourceType();

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { launch } from './browser.js';
+import { type DataMap, dataSources } from './data.js';
 import { diffTrees } from './diff.js';
 import { outline } from './outline.js';
 import { snapshot } from './page/snapshot.js';
@@ -69,6 +70,12 @@ export async function findDesignEdits(exported: string, edited: string): Promise
             const before = await trees(at);
             if (!there) { out.push({ file, title: before.title, status: 'removed', changes: [] }); continue; }
             const changes = diffTrees(before.tree, (await trees(there)).tree);
+            // Text that came from the page's data (export_design keeps it beside the canvas).
+            const dataFile = path.join(exported, 'data', `${file.replace(/\.dc\.html$/, '')}.json`);
+            if (fs.existsSync(dataFile)) {
+                const data = JSON.parse(fs.readFileSync(dataFile, 'utf8')) as DataMap;
+                for (const c of changes) { const d = dataSources(c, data); if (d.length) c.data = d; }
+            }
             out.push({ file, title: before.title, status: changes.length ? 'changed' : 'same', changes });
         }
         for (const [file, at] of now) {

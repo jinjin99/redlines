@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Data or code**: `capture_states` notes which of a page's text came from its API answers (`<state>.data.json`), and `find_design_edits` marks a designer's edit to such text `! not code`, with the request and key it came from.
+
 ## 0.2.0
 
 Designing with it: a requirement drafted in code, a canvas a designer edits and plays through, their edits back in the code.

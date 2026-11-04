@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { launch } from '../src/browser.js';
 import { linksFrom, loadConfig } from '../src/capture.js';
 import { findDesignEdits } from '../src/edits.js';
+import { formatChanges } from '../src/diff.js';
 import { exportDesign } from '../src/export.js';
 import { FIXTURES, fixtureShots } from './helpers.js';
 
@@ -59,6 +60,8 @@ test('find_design_edits: a designer\'s edits on the canvas, as changes', async (
     // As the canvas saves them: copy retyped, a padding changed in the properties panel, the links moved about, an artboard added.
     const file = path.join(edited, 'project/details.dc.html');
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('Shipped with express delivery.', 'Ships express, arrives Friday.').replace(/(<div class="dialog-panel"[^>]*?)( style="[^"]*")?>/, '$1 style="padding: 32px;">').replace(/left: \d+px; top: \d+px/, 'left: 1px; top: 2px'));
+    const list = path.join(edited, 'project/list.dc.html');
+    fs.writeFileSync(list, fs.readFileSync(list, 'utf8').replace('Ada Lovelace', 'Ada King'));
     fs.writeFileSync(path.join(edited, 'project/Empty.dc.html'), fs.readFileSync(path.join(exported, 'project/list.dc.html'), 'utf8').replace(/<table>[\s\S]*<\/table>/, '<p>No orders yet</p>'));
 
     const boards = await findDesignEdits(exported, edited);
@@ -66,7 +69,11 @@ test('find_design_edits: a designer\'s edits on the canvas, as changes', async (
     assert.equal(details.status, 'changed');
     assert.ok(details.changes.some(c => c.now.join(' ').includes('Ships express, arrives Friday.') && c.was.join(' ').includes('Shipped with express delivery.')), JSON.stringify(details.changes));
     assert.ok(details.changes.some(c => c.styles?.some(s => s.property === 'padding-top' && s.now === '32px')), JSON.stringify(details.changes));
-    assert.equal(boards.find(b => b.file === 'list.dc.html')!.status, 'same');
+    // The dialog's copy is the code's; the customer's name is the orders' data.
+    assert.ok(details.changes.every(c => !c.data));
+    const name = boards.find(b => b.file === 'list.dc.html')!.changes[0];
+    assert.deepEqual(name.data, [{ text: 'Ada Lovelace', from: 'GET /api/orders', key: '[0].customer', whole: true }]);
+    assert.match(formatChanges([name]), /! not code: "Ada Lovelace" is data from GET \/api\/orders → \[0\]\.customer/);
     const added = boards.find(b => b.file === 'Empty.dc.html')!;
     assert.equal(added.status, 'added');
     assert.match(added.outline!, /No orders yet/);

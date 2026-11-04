@@ -10,6 +10,7 @@ import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-c
 import { LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { configProblems } from './config.js';
+import { DataWatcher } from './data.js';
 import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
 import { loadRecording, Recorder, type Recording, replay } from './recording.js';
 import { freeze } from './page/freeze.js';
@@ -110,6 +111,8 @@ export interface OpenOptions {
     recording?: Recording;
     /** Records the page's API answers (record_data). */
     recorder?: Recorder;
+    /** Collects the strings in the page's API answers. */
+    data?: DataWatcher;
 }
 
 /** Waits until the page's address has stayed the same for a second (an app that sends itself on after loading), up to `max` ms. */
@@ -143,7 +146,7 @@ export async function evaluateSettled<R, A>(page: Page, fn: (arg: A) => R | Prom
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder, data }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState });
     const page = await context.newPage();
     if (now) {
@@ -167,6 +170,7 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
         });
     }
     recorder?.watch(page);
+    data?.watch(page);
     try {
         // Shown first; then load and idle as far as they come (a dev server's page may keep a request
         // hanging, so neither is required).
@@ -253,7 +257,7 @@ async function boxOf(page: Page, selector: string): Promise<Box | undefined> {
 }
 
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
-export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[] }
+export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[]; data?: boolean }
 
 export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void }): Promise<CaptureResult[]> {
     const baseURL = base ?? config.baseURL;
@@ -272,6 +276,8 @@ export async function captureStates({ config, base, out, only, root = process.cw
     try {
         for (const name of names) {
             const state = config.states[name];
+            const data = new DataWatcher();
+            if (recording) data.addRecording(recording.entries);
             let opened;
             try {
                 opened = await openState(browser, {
@@ -285,6 +291,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                     now: config.now,
                     msw: mswSource && { source: mswSource, handlers: handlersFor(mswSource, state.msw) },
                     recording,
+                    data,
                     locale: config.locale,
                     timezone: config.timezone,
                 });
@@ -299,6 +306,10 @@ export async function captureStates({ config, base, out, only, root = process.cw
                 const tree = await evaluateSettled(page, snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
+                // The text that came from the data, for telling a designer's data edits from copy edits.
+                const strings = await data.on(tree);
+                const hasData = Object.keys(strings).length > 0;
+                if (hasData) fs.writeFileSync(path.join(out, `${name}.data.json`), JSON.stringify(strings, null, 1));
                 // Where its clicks go, measured on the page as it is now.
                 const links: Link[] = [];
                 for (const l of linksFrom(config, name)) {
@@ -323,7 +334,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                         await check.close();
                     }
                 }
-                results.push({ name, ok: true, errors, fidelity, links });
+                results.push({ name, ok: true, errors, fidelity, links, data: hasData });
                 const same = fidelity === null ? '' : `  html ${(fidelity * 100).toFixed(2)}% the same as the page`;
                 log(`ok   ${name}${same}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
             } catch (error) {
@@ -337,7 +348,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
     } finally {
         await browser.close();
     }
-    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}) })) };
+    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}), ...(r.data ? { data: `${r.name}.data.json` } : {}) })) };
     // Capturing some states adds to what the folder had.
     const file = path.join(out, 'manifest.json');
     if (only?.length && fs.existsSync(file)) {

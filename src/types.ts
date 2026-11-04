@@ -58,6 +58,18 @@ export interface Change {
     /** One change repeated (a cell in every row). */
     count: number;
     boxes: { before: Box[]; after: Box[] };
+    /** Text it changed that came from the page's data (find_design_edits): change the data or configuration, not the code. */
+    data?: DataSource[];
+}
+
+export interface DataSource {
+    text: string;
+    /** The request whose answer held it: 'GET /api/orders'. */
+    from: string;
+    /** Where in the answer: '[0].customer'. */
+    key: string;
+    /** false: the data is part of the text (copy around it). */
+    whole: boolean;
 }
 
 export type Step =
@@ -120,6 +132,8 @@ export interface ManifestState {
     fidelity?: number;
     /** Where clicking goes from this state: the element's box on the page and the state it leads to. */
     links?: Link[];
+    /** The page's text that came from its data (<state>.data.json): text → { from, key }. */
+    data?: string;
 }
 
 export interface Link {

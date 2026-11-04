@@ -30,7 +30,7 @@ export function findChanges(beforeDir: string, afterDir: string): ComparedState[
         if (!fs.existsSync(file)) throw new Error(`${dir} has no manifest.json: capture into it first (redlines capture_states)`);
         const m = readJson<Manifest>(file);
         // Files are named after their state, in the folder itself: nothing else is read.
-        for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png` || (s.html && s.html !== `${s.name}.html`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
+        for (const s of m.states ?? []) if (!/^[\w-]+$/.test(s.name) || s.tree !== `${s.name}.json` || s.image !== `${s.name}.png` || (s.html && s.html !== `${s.name}.html`) || (s.data && s.data !== `${s.name}.data.json`)) throw new Error(`${file}: unexpected state entry ${JSON.stringify(s)}`);
         return m;
     };
     const a = manifest(beforeDir), b = manifest(afterDir);
