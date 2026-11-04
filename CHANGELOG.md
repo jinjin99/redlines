@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Log in once.** A login is kept per machine and host (`~/.redlines/auth/<host>.json`), shared by every project, worktree and port, and every run writes back what the app refreshed, so it no longer expires with the app's first token. Logins kept in a project by an older redlines move there on first use.
 - Component props holding an id made up on each render (React's `useId`, react-aria's ids) are left out of the page tree: they differ on every load and made every captured field look changed.
 
 ## 0.3.0

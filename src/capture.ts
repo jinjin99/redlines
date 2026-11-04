@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-core';
 
-import { LOGIN, storedAuth } from './auth.js';
+import { keepAuth, LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { configProblems } from './config.js';
 import { DataWatcher } from './data.js';
@@ -217,7 +217,10 @@ export async function viewPage({ url, steps, mocks, viewport, settle, storageSta
         const { context, page, errors } = await openState(browser, { url, steps, mocks, viewport, settle, storageState });
         try {
             const tree = await evaluateSettled(page, snapshot, {});
-            return { tree, screenshot: await page.screenshot({ fullPage }), errors };
+            const screenshot = await page.screenshot({ fullPage });
+            // What the app refreshed while open (a rotated token) is kept for next time.
+            if (storageState) await keepAuth(storageState, context).catch(() => {});
+            return { tree, screenshot, errors };
         } finally {
             await context.close();
         }
@@ -340,6 +343,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                         await check.close();
                     }
                 }
+                if (storageState) await keepAuth(storageState, context).catch(() => {});
                 results.push({ name, ok: true, errors, fidelity, links, data: hasData });
                 const same = fidelity === null ? '' : `  html ${(fidelity * 100).toFixed(2)}% the same as the page`;
                 log(`ok   ${name}${same}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
@@ -394,6 +398,7 @@ export async function recordData({ config, base, file, only, root = process.cwd(
                     recorder,
                 });
                 await recorder.flush();
+                if (storageState) await keepAuth(storageState, context).catch(() => {});
                 await context.close();
                 results.push({ name, ok: true, errors, fidelity: null });
                 log(`ok   ${name}`);

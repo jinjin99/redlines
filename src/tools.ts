@@ -33,7 +33,7 @@ export interface Tool {
 export const INSTRUCTIONS = `redlines shows what a UI change does to the pages, state by state.
 
 Use it whenever you change UI code:
-0. Apps behind a login: when a tool says the app sent a page to a login page, call log_in with the app's URL and tell the user to log in in the browser window that opens (they type their own password; you never ask for it). The login is kept for that app (each port separately, so the before and after versions each need one).
+0. Apps behind a login: when a tool says the app sent a page to a login page, call log_in with the app's URL and tell the user to log in in the browser window that opens (they type their own password; you never ask for it). The login is kept once per machine and host (every project, worktree and port share it) and refreshed by every run, so log in again only when a tool says the login has expired.
 1. See your work. After changing a page, call view_page on it (the running app's URL) before you say it is done. Read the screenshot and the outline: is the change there, does anything look broken, are there page errors? Use steps to reach dialogs, menus and filled-in forms, and mocks for data states (an empty list, an error).
 2. Show the change to people (designers, PMs, reviewers):
    - list_states tells you which states the project lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
@@ -84,16 +84,16 @@ export const TOOLS: Tool[] = [
     {
         name: 'log_in',
         title: 'Log in to the app',
-        description: 'For an app behind a login: open a browser window on the app for the user to log in themselves, wait until they have, and keep the login (cookies, local storage) for later view_page and capture_states of the same app. Tell the user to log in in the window that opens, and that if it does not close by itself once they are in, to press the "Logged in — save for redlines" button at the bottom right. Never ask for their password.',
+        description: 'For an app behind a login: open a browser window on the app for the user to log in themselves, wait until they have, and keep the login (cookies, local storage) for later view_page, capture_states and record_data on the same host, from any project. Tell the user to log in in the window that opens, and that if it does not close by itself once they are in, to press the "Logged in — save for redlines" button at the bottom right. Never ask for their password.',
         input: {
             url: httpUrl.describe('The app, e.g. http://localhost:3000 (it may send the window on to its login page)'),
             until: z.string().optional().describe('A selector that shows only once logged in, when coming back to the app is not enough to tell.'),
             timeoutMinutes: z.number().int().min(1).max(30).optional(),
         },
         annotations: { openWorldHint: true },
-        async run({ url, until, timeoutMinutes }, { root }) {
-            const file = await logIn({ root, url, until, timeoutMinutes });
-            return { text: `Logged in to ${new URL(url).origin}. The login is kept in ${path.relative(root, file)} (out of git, readable only by you) and used by view_page and capture_states for this app.` };
+        async run({ url, until, timeoutMinutes }) {
+            const file = await logIn({ url, until, timeoutMinutes });
+            return { text: `Logged in to ${new URL(url).hostname}. The login is kept in ${file} (readable only by you, outside every project) and used by view_page, capture_states and record_data for every project and port on this host; each run keeps what the app refreshes, so it lasts until the app ends the session.` };
         },
     },
     {

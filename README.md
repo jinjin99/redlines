@@ -145,7 +145,13 @@ redlines never asks for a password. You log in yourself, once per app:
 npx redlines log_in --url http://localhost:3000
 ```
 
-A browser window opens on the app; log in as you always do. Once the window is back on the app (or `--until <selector>` shows), the browser's login state (cookies, local storage) is saved to `.redlines/auth/<host>.json` and the window closes. From then on `view_page` and `capture_states` open that app logged in. The file is a credential: it is readable only by you, and its folder carries its own `.gitignore`. Each host and port is separate, so the version before the change and the one after it each need a login. When it expires, a capture says the app sent the page to its login page; log in again.
+A browser window opens on the app; log in as you always do. Once the window is back on the app (or `--until <selector>` shows), the browser's login state (cookies, local storage) is saved and the window closes. From then on `view_page`, `capture_states` and `record_data` open that app logged in.
+
+- **Once per machine and host.** The login is kept in `~/.redlines/auth/<host>.json` (or `REDLINES_AUTH_DIR`), so every project, worktree and port on that host shares it, as the browser's cookies do: the version before a change and the one after it, on two ports, use the same login.
+- **Kept fresh.** Every run writes back what the app refreshed while it was open (a rotated token), so a login lasts as long as the app keeps the session alive, not as long as its first token.
+- **A credential.** The file is readable only by you, its folder carries a `.gitignore`, and it is never printed.
+
+When the app does end the session, a capture says it sent the page to its login page; log in again.
 
 In CI, where nobody can type, log in with steps and take the secret from the environment, never the config:
 

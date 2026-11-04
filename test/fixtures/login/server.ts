@@ -1,5 +1,5 @@
 // An app behind a login, for the tests: every page but /login needs the session cookie; /login sets
-// it when the form is sent with the right password.
+// it when the form is sent with the right password. Each logged-in page sets a refreshed token cookie.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -25,7 +25,9 @@ export function loginApp(password: string): Promise<{ base: string; close: () =>
                 return;
             }
             if (!loggedIn) { res.writeHead(302, { location: '/login' }); res.end(); return; }
-            res.writeHead(200, { 'content-type': 'text/html' });
+            // A logged-in page refreshes a token, as apps do: the count of refreshes so far.
+            const refreshed = Number(/(?:^|;\s*)refreshed=(\d+)/.exec(req.headers.cookie ?? '')?.[1] ?? 0) + 1;
+            res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': `refreshed=${refreshed}; Path=/` });
             res.end(page('<main><h1>Dashboard</h1><p>Only for people who logged in.</p></main>'));
         });
         server.listen(0, '127.0.0.1', () => resolve({ base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close() }));
