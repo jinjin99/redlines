@@ -16,7 +16,7 @@ import { findDesignEdits } from './edits.js';
 import { exportDesign } from './export.js';
 import { outline } from './outline.js';
 import { affectedStates, baseCommit, formatAffected } from './affected.js';
-import { baseCheckout, fingerprint, freePort, headOf, startApp } from './app.js';
+import { answers, appUrl, baseCheckout, fingerprint, freePort, headOf, startApp } from './app.js';
 import { buildPrototype, checkPrototype } from './prototype.js';
 import { findChanges, writeReport } from './report.js';
 
@@ -85,9 +85,11 @@ const CONFIG_EXAMPLE = `export default {
 
 
 /** The change as text: find_changes' list. */
-function changesText(before: string, after: string): string {
+function changesText(before: string, after: string, unreached?: Set<string>): string {
     const states = findChanges(before, after);
-    const parts = states.filter(s => s.status !== 'same').map(s => `### ${s.title} (${s.name})\n${s.status === 'changed' ? formatChanges(s.changes) : s.status === 'added' ? 'a new state (not captured before)' : 'captured before, not after'}`);
+    // A state the code change does not run in, that changed anyway: the capture differs, not the code.
+    const noise = (name: string) => (unreached?.has(name) ? '\n! The code change does not run in this state: these differences come from the captures themselves (the data, timing, a page that loaded differently), not from the change. Capture this state again to check.' : '');
+    const parts = states.filter(s => s.status !== 'same').map(s => `### ${s.title} (${s.name})\n${s.status === 'changed' ? formatChanges(s.changes) + noise(s.name) : s.status === 'added' ? 'a new state (not captured before)' : 'captured before, not after'}`);
     const same = states.filter(s => s.status === 'same').map(s => s.name);
     return `${parts.join('\n\n') || 'no changes'}${same.length ? `\n\nno changes: ${same.join(', ')}` : ''}`;
 }
@@ -114,6 +116,9 @@ async function captureChange({ config, root, dir, only, fresh, log }: { config: 
     let env: Record<string, string> = {};
     let proxied = false;
     try {
+        const url = appUrl(app);
+        // Checked before the data proxy starts, so a port in use says so.
+        if (await answers(url)) throw new Error(`Something already answers at ${url} (another dev server?): stop it, or give app.port and app.url a free port in the config`);
         if (app.dataProxy) {
             if (!recording) throw new Error('app.dataProxy replays the recording: set recording in the config (record it with data_proxy and record_data)');
             if (proxyStatus(root)) throw new Error('A data proxy is already running for this project: stop it first (data_proxy --action stop)');
@@ -121,7 +126,7 @@ async function captureChange({ config, root, dir, only, fresh, log }: { config: 
             proxied = true;
         }
         const version = async (side: 'before' | 'after', cwd: string, source: NonNullable<Manifest['source']>) => {
-            log(`${side}: starting ${app.start} in ${cwd}`);
+            log(`${side}: ${app.build ? `building (${app.build}), then ` : ''}starting ${app.start} in ${cwd}`);
             const running = await startApp(app, { cwd, env, log: path.join(root, '.redlines', `app-${side}.log`) });
             try {
                 // A dev server builds each page the first time it is asked for: ask once, unhurried, before capturing.
@@ -175,7 +180,7 @@ export const TOOLS: Tool[] = [
         input: {
             url: httpUrl.describe('The page, e.g. http://localhost:3000/orders'),
             steps: z.array(step).optional().describe('Done in order after the page loads. Selectors are Playwright selectors: text=Save, role=button[name="Save"], CSS.'),
-            mocks: z.record(z.any()).optional().describe('"GET /api/orders": <JSON answer> (or { status, json | body }). Paths match from the start; * matches anything.'),
+            mocks: z.record(z.any()).optional().describe('"GET /api/orders": <JSON answer> (or { status, json | body }). The whole path must match; * matches any run of characters.'),
             width: z.number().int().min(320).max(3840).optional(),
             height: z.number().int().min(320).max(4000).optional(),
             fullPage: z.boolean().optional().describe('Screenshot the whole page instead of the first screen.'),
@@ -239,15 +244,20 @@ export const TOOLS: Tool[] = [
         async run({ states, fresh, app, config: file }, { root, log }) {
             const config = await loadConfig(file ? inProject(root, file) : undefined, root);
             const done = await captureChange({ config, root, dir: appDir(config, root, app), only: states, fresh, log: log ?? (() => {}) });
-            const failed = done.results.filter(r => !r.ok);
+            // A state only the changed version reaches (its steps find a new button) is new with the change, not a failure.
+            const afterOk = new Set(done.results.filter(r => r.side === 'after' && r.ok).map(r => r.name));
+            const failed = done.results.filter(r => !r.ok && !(r.side === 'before' && afterOk.has(r.name)));
+            const newOnes = done.results.filter(r => !r.ok && r.side === 'before' && afterOk.has(r.name));
             // A page whose requests came back 401 shows a login or an error, not the state.
             const denied = done.results.filter(r => r.ok && r.errors?.some(e => /\b401\b/.test(e))).map(r => `${r.side} ${r.name}`);
+            const affected = affectedStates({ dir: done.dir, base: done.base, after: done.after, before: done.before, states });
             const parts = [
                 ...(denied.length ? [`! The app was refused (401) on ${denied.join(', ')}: the login has probably expired, so those pages may show an error or a login instead of the state. Log in again (log_in) and run this again with fresh.`, ''] : []),
                 `before: ${done.kept ? 'kept' : 'captured'} (${done.base.slice(0, 10)}) → ${path.relative(root, done.before)}; after: the working copy → ${path.relative(root, done.after)}`,
                 ...failed.map(r => `FAIL ${r.side} ${r.name}: ${r.error}`),
-                '', '## What changed', changesText(done.before, done.after),
-                '', '## Which states the code change reaches', formatAffected(affectedStates({ dir: done.dir, base: done.base, after: done.after, before: done.before, states })),
+                ...newOnes.map(r => `new with the change: ${r.name} (the version before cannot reach it: ${r.error})`),
+                '', '## What changed', changesText(done.before, done.after, new Set(affected.untouched.filter(n => !affected.noCoverage.includes(n)))),
+                '', '## Which states the code change reaches', formatAffected(affected),
             ];
             return { text: parts.join('\n'), isError: failed.length > 0 || denied.length > 0 };
         },

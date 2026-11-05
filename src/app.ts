@@ -85,8 +85,11 @@ export function freePort(): Promise<number> {
     });
 }
 
+/** The last lines of a log, to say why something failed. */
+const tail = (log: string) => fs.readFileSync(log, 'utf8').trimEnd().split('\n').slice(-15).map(l => `  ${l.slice(0, 300)}`).join('\n');
+
 /** Whether something answers at `url` (any HTTP answer below 500, a redirect included). */
-async function answers(url: string): Promise<boolean> {
+export async function answers(url: string): Promise<boolean> {
     try {
         const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
         await r.body?.cancel();
@@ -103,19 +106,21 @@ export const appUrl = (app: AppConfig) => app.url ?? `http://localhost:${app.por
 
 /**
  * Builds (if the config says how) and starts the app in `cwd`, and waits until it answers. Its output
- * goes to `log`. `stop` ends it with everything it started.
+ * goes to `log`; `env` is for the running app, not the build. `stop` ends it with everything it started.
  */
 export async function startApp(app: AppConfig, { cwd, env = {}, log }: { cwd: string; env?: Record<string, string>; log: string }): Promise<Running> {
     const url = appUrl(app);
     if (await answers(url)) throw new Error(`Something already answers at ${url}: stop it first, so the version redlines starts is the one captured`);
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const out = fs.openSync(log, 'w');
-    const vars = { ...process.env, ...env, ...(app.env ?? {}), PORT: String(app.port ?? (Number(new URL(url).port) || 3000)) };
+    const own = { ...process.env, ...(app.env ?? {}), PORT: String(app.port ?? (Number(new URL(url).port) || 3000)) };
+    // `env` (the data proxy's variables) is for the running app only: a build's own requests (codegen
+    // fetching a schema) go to the network, not to a replay that would answer them with something else.
     if (app.build) {
-        const built = spawnSync(app.build, { cwd, env: vars, shell: true, stdio: ['ignore', out, out] });
-        if (built.status !== 0) throw new Error(`The build failed (${app.build}, in ${cwd}); its output is in ${log}`);
+        const built = spawnSync(app.build, { cwd, env: own, shell: true, stdio: ['ignore', out, out] });
+        if (built.status !== 0) throw new Error(`The build failed (${app.build}, in ${cwd}, exit ${built.status ?? built.signal}); its output is in ${log}, ending:\n${tail(log)}`);
     }
-    const child: ChildProcess = spawn(app.start, { cwd, env: vars, shell: true, stdio: ['ignore', out, out], detached: true });
+    const child: ChildProcess = spawn(app.start, { cwd, env: { ...own, ...env, ...(app.env ?? {}) }, shell: true, stdio: ['ignore', out, out], detached: true });
     let exited: number | null = null;
     child.on('exit', code => { exited = code ?? -1; });
     const stop = async () => {
@@ -129,8 +134,7 @@ export async function startApp(app: AppConfig, { cwd, env = {}, log }: { cwd: st
     const end = Date.now() + (app.timeout ?? 300) * 1000;
     while (Date.now() < end) {
         if (exited !== null) {
-            const tail = fs.readFileSync(log, 'utf8').split('\n').slice(-15).join('\n');
-            throw new Error(`The app stopped before it answered (${app.start}, in ${cwd}, exit ${exited}):\n${tail}`);
+            throw new Error(`The app stopped before it answered (${app.start}, in ${cwd}, exit ${exited}):\n${tail(log)}`);
         }
         if (await answers(url)) return { url, stop, log };
         await new Promise(r => setTimeout(r, 1000));

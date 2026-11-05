@@ -209,11 +209,15 @@ export async function startProxy({ root, mode, file, port = 8899, config }: { ro
     const child = spawn(process.execPath, [path.join(PACKAGE_ROOT, 'dist', 'bin', 'redlines.js'), '__data_proxy', mode, file, String(port), ...(config ? [config] : [])], { cwd: root, detached: true, stdio: ['ignore', out, out] });
     child.unref();
     const state: ProxyState = { pid: child.pid!, port, mode, file, ca: certPath, log, ...(config ? { config } : {}) };
-    for (let i = 0; i < 60 && !(await listening(port)); i++) {
+    // Loading a big recording takes a while.
+    for (let i = 0; i < 240 && !(await listening(port)); i++) {
         if (!alive(state.pid)) throw new Error(`The data proxy did not start: see ${log}`);
         await new Promise(r => setTimeout(r, 250));
     }
-    if (!(await listening(port))) throw new Error(`The data proxy did not start within 15 s: see ${log}`);
+    if (!(await listening(port))) {
+        try { process.kill(state.pid, 'SIGKILL'); } catch { /* gone */ }
+        throw new Error(`The data proxy did not start within 60 s: see ${log}`);
+    }
     fs.writeFileSync(stateFile(root), JSON.stringify(state, null, 1));
     return state;
 }

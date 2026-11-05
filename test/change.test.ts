@@ -125,3 +125,22 @@ test('in a file no state loaded, imports, re-exports, types and comments are not
     const code = source.split('\n').map((_, i) => i + 1).filter(l => !skipped.has(l));
     assert.deepEqual(code, [8, 13, 14, 15, 17]);
 });
+
+test('the build runs without the data proxy\'s variables; the app gets them', async () => {
+    const { startApp } = await import('../src/app.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-env-'));
+    fs.writeFileSync(path.join(dir, 'build.mjs'), "import fs from 'node:fs'; fs.writeFileSync('built.txt', String(process.env.HTTPS_PROXY ?? 'none') + ' ' + process.env.MODE);");
+    fs.writeFileSync(path.join(dir, 'serve.mjs'), "import http from 'node:http'; http.createServer((_q, r) => r.end(String(process.env.HTTPS_PROXY ?? 'none') + ' ' + process.env.MODE)).listen(Number(process.env.PORT));");
+    const port = await freePort();
+    const app = await startApp({ dir, build: 'node build.mjs', start: 'node serve.mjs', port, env: { MODE: 'test' } }, { cwd: dir, env: { HTTPS_PROXY: 'http://127.0.0.1:1' }, log: path.join(dir, 'app.log') });
+    try {
+        assert.equal(fs.readFileSync(path.join(dir, 'built.txt'), 'utf8'), 'none test');
+        assert.equal(await (await fetch(`http://localhost:${port}/`)).text(), 'http://127.0.0.1:1 test');
+    } finally { await app.stop(); }
+});
+
+test('a failed build says why', async () => {
+    const { startApp } = await import('../src/app.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-build-'));
+    await assert.rejects(startApp({ dir, build: 'echo "schema fetch failed: 403" && exit 3', start: 'true', port: await freePort() }, { cwd: dir, log: path.join(dir, 'app.log') }), /exit 3[\s\S]*schema fetch failed: 403/);
+});

@@ -27,7 +27,7 @@ npm install --save-dev github:jinjin99/redlines#v0.3.0
 npx playwright-core install chromium   # if you don't have a Chromium from Playwright already
 ```
 
-Or run it without installing: `npx -y github:jinjin99/redlines#v0.3.0 <tool> …`.
+Or run it without installing: `npx -y github:jinjin99/redlines#v0.3.0 <tool> …` (the first run installs it, which takes a minute or two). The examples below write `redlines <tool>`: with npx, put `npx -y github:jinjin99/redlines` in front instead.
 
 Describe the states to look at in `redlines.config.mjs`:
 
@@ -128,7 +128,6 @@ All three answer requests the **browser** makes. An app that renders on the serv
 The dev server is started with proxy variables, so its own requests to the backend go through a local proxy redlines runs. Recording, the proxy passes them on and keeps the answers; replaying, it answers from them. It reads and writes the same recording file as `record_data`, so one file holds the server's requests and the browser's.
 
 ```bash
-npm install --save-dev mockttp                          # the proxy's engine, an optional dependency
 npx redlines data_proxy --action start --mode record    # prints the variables for the dev server
 HTTP_PROXY=… HTTPS_PROXY=… NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=… npm run dev
 npx redlines record_data --base http://localhost:3000   # the browser side, into the same file
@@ -214,6 +213,8 @@ redlines capture_change --app ../my-app-feature
 3. **Which states the change reaches.** While capturing, redlines keeps which lines of your source each state ran (the browser's coverage, mapped back through the scripts' source maps; a production build needs them, e.g. `vite build --sourcemap`). Set against the lines your diff touched, that names the states the change reaches, with `file:lines`, and the states it doesn't. Shared code a state runs counts: change a button and every state showing it is reached.
 4. **What no state shows.** Changed lines no state ran are listed apart: a new dialog, an error branch, an empty list. Either list a state that shows it, or ask what should happen there. Files no state even loaded are marked (server code, or a page none of the states opens).
 
+A state for it usually needs other data and a click: a mock function changes the one field of the recorded answer that matters (`{ ...recorded, note: LONG_NOTE }`, see [mock data](#mock-data)), and steps open what is behind the click. Write the steps for the changed version: where the version before cannot do them (the button is new), the state is listed as new with the change, not as a failure. A state the code change does not run in that still shows differences is marked as such: they come from the two captures, not from the change.
+
 ## Prototypes
 
 The canvas shows each state; a prototype is the app itself, to click through. `build_prototype` walks the states at `base` (logged in, with the config's data) and keeps everything the browser is given: the pages, scripts, styles, fonts, the API's answers and the config's mocks. A service worker plays them back, so the app runs again with no server, no backend and no login, in anyone's browser.
@@ -252,13 +253,13 @@ The config is checked when it is read: a key redlines doesn't know is an error n
 | `states` | `{ <name>: { path, title, steps, mocks, viewport, settle, ignore, links } }`. Names are letters, digits, `-` and `_`. |
 | `links` | Per state, `{ <selector>: <state> }`: where clicking that element leads, for the exported pages and canvas to play through. A state whose steps continue another's on the same page needs none. |
 | `steps` | Done in order after the page loads: `{ click: <selector> }`, `{ fill: [<selector>, <text> or { env: <variable> }] }`, `{ press: <key> }`, `{ hover: <selector> }`, `{ select: [<selector>, <value>] }`, `{ waitFor: <selector> }`, `{ wait: <ms> }`, or a function `async page => …` (Playwright's page). Selectors are [Playwright selectors](https://playwright.dev/docs/locators): `text=Save`, `role=button[name="Save"]`, CSS. |
-| `mocks` | `{ "<METHOD> <path>": <answer> }`, for every state, and per state on top. The path is matched from the start, `*` matches anything. An answer is JSON data, `{ status, json \| body, headers }`, or a function of the request. Requests not listed go to the network. |
+| `mocks` | `{ "<METHOD> <path>": <answer> }`, for every state, and per state on top. The whole path must match (the query is not part of it), and `*` matches any run of characters: `GET /api/orders` is that path alone, `GET /api/orders*` also its sub-paths. An answer is JSON data, `{ status, json \| body, headers }`, or a function of the request. Requests not listed go to the network. |
 | `ignore` | A CSS selector for parts of the page to leave out (a clock, an ad slot). |
 | `settle` | Milliseconds to wait after the page is idle, default 300. |
 | `stepTimeout` | How long a step waits for what it acts on, default 5000 ms. A step that finds nothing fails the state with which step and why. |
 | `locale`, `timezone` | Default `en-US` and `UTC`, so dates read the same on every machine. |
 | `now` | The time pages see as now, e.g. `'2026-11-03T10:00:00Z'`. Pages that work dates out from today ("the last 30 days") then read the same whenever they are captured, so the version before a change, captured yesterday, and the one after it, captured today, don't differ only by the date. |
-| `app` | How to run the app, for `capture_change`: `{ dir, start, build?, port?, url?, base?, env?, dataProxy?, timeout? }`. See [A change, start to end](#a-change-start-to-end). |
+| `app` | How to run the app, for `capture_change`: `{ dir, start, build?, port?, url?, base?, env?, dataProxy?, timeout? }`. `build` runs with `env` but not the data proxy (a codegen fetching a schema goes to the network); `start` runs with both. See [A change, start to end](#a-change-start-to-end). |
 | `coverage` | Keep which source lines each state ran (`<state>.coverage.json`), for `affected_states`. On whenever `app` is set. |
 
 Animations and transitions are turned off and the caret hidden while capturing, so two shots of the same page are the same.

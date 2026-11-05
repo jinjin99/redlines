@@ -231,7 +231,8 @@ export function affectedStates({ dir, base, after, before, states }: { dir: stri
 /** The result as lines to read. */
 export function formatAffected(a: Affected): string {
     const range = (l: [number, number][]) => l.map(([x, y]) => (x === y ? `${x}` : `${x}-${y}`)).join(',');
-    const lines = [`Changed since ${a.base.slice(0, 10)}: ${a.changed.length} file${a.changed.length === 1 ? '' : 's'}`];
+    const own = a.changed.length - a.generated.length;
+    const lines = [`Changed since ${a.base.slice(0, 10)}: ${own} file${own === 1 ? '' : 's'}${a.generated.length ? ` (and ${a.generated.length} generated)` : ''}`];
     if (a.states.length) {
         lines.push('', 'States the change reaches:');
         for (const s of a.states) lines.push(`  ${s.state}`, ...s.files.map(f => `    ${f.file}:${range(f.lines)}${f.side === 'old' ? ' (removed lines it ran before)' : ''}`));

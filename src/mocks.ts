@@ -14,7 +14,7 @@ export interface MockReply { status: number; headers?: Record<string, string>; c
 /** POST, PUT, PATCH, DELETE: a request that changes data. */
 export const isWrite = (method: string) => !/^(GET|HEAD|OPTIONS)$/.test(method);
 
-/** "GET /api/items" or "/api/items*" against a request. Paths are matched from the start, `*` is any run of characters. */
+/** "GET /api/items" or "/api/items*" against a request. The whole path must match (the query is not part of it); `*` is any run of characters. */
 function matcher(pattern: string): (request: MockRequest) => boolean {
     const [method, route] = /^[A-Z]+\s/.test(pattern) ? pattern.split(/\s+/, 2) : ['*', pattern];
     const re = new RegExp(`^${route.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);

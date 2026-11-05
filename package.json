@@ -55,18 +55,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "mockttp": "4.6.3",
     "playwright-core": "1.63.0",
     "zod": "3.25.76"
   },
   "peerDependencies": {
-    "msw": ">=2.4",
-    "mockttp": ">=4.6"
+    "msw": ">=2.4"
   },
   "peerDependenciesMeta": {
     "msw": {
-      "optional": true
-    },
-    "mockttp": {
       "optional": true
     }
   },
@@ -74,7 +71,6 @@
     "@eslint/js": "10.0.1",
     "@types/node": "20.19.43",
     "eslint": "10.12.0",
-    "mockttp": "4.6.3",
     "msw": "2.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
