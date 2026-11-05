@@ -117,7 +117,7 @@ async function captureChange({ config, root, dir, only, fresh, log }: { config: 
         if (app.dataProxy) {
             if (!recording) throw new Error('app.dataProxy replays the recording: set recording in the config (record it with data_proxy and record_data)');
             if (proxyStatus(root)) throw new Error('A data proxy is already running for this project: stop it first (data_proxy --action stop)');
-            env = proxyEnv(await startProxy({ root, mode: 'replay', file: recording, port: await freePort() }));
+            env = proxyEnv(await startProxy({ root, mode: 'replay', file: recording, port: await freePort(), config: config.file }));
             proxied = true;
         }
         const version = async (side: 'before' | 'after', cwd: string, source: NonNullable<Manifest['source']>) => {

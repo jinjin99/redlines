@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { captureStates } from '../src/capture.js';
+import { captureStates, loadConfig } from '../src/capture.js';
 import { proxyEnv, startProxy, stopProxy } from '../src/proxy.js';
 import type { Config } from '../src/types.js';
 
@@ -64,6 +64,40 @@ test('data proxy: record what a server-rendering app fetches on the server, then
         assert.match(stopped?.said ?? '', /2 answered from the recording, 0 passed on to the backend/);
         // Its own certificate authority, the key readable only by its owner, out of git.
         if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(root, '.redlines/proxy-ca/key.pem')).mode & 0o777, 0o600);
+    } finally {
+        app?.child.kill();
+        await stopProxy(root);
+        api.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('data proxy: a state\'s mocks answer the app\'s server too, over the recording', { skip: !envProxy && 'this Node does not send fetch through proxy variables' }, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-proxy-mocks-'));
+    const file = path.join(root, '.redlines', 'recording.har');
+    const api = await backend();
+    let app: { base: string; child: ChildProcess } | undefined;
+    try {
+        let proxy = await startProxy({ root, mode: 'record', file, port: await freePort() });
+        app = await ssrApp(api.url, proxyEnv(proxy));
+        await captureStates({ config: { file: path.join(root, 'redlines.config.mjs'), states: { page: { path: '/' } } }, base: app.base, out: path.join(root, 'live'), root, log: () => {} });
+        app.child.kill();
+        await stopProxy(root);
+
+        // The proxy reads the config (functions and all) and answers the mocks of the state being captured.
+        const configFile = path.join(root, 'redlines.config.mjs');
+        fs.writeFileSync(configFile, `export default { states: {
+            plain: { path: '/' },
+            vip: { path: '/', mocks: { 'GET /api/orders': (_request, { recorded }) => ({ ...recorded, customer: 'VIP ' + recorded.customer }) } },
+        } };`);
+        const config = await loadConfig(configFile);
+        proxy = await startProxy({ root, mode: 'replay', file, port: await freePort(), config: configFile });
+        app = await ssrApp(api.url, proxyEnv(proxy));
+        await captureStates({ config, base: app.base, out: path.join(root, 'replayed'), root, log: () => {} });
+        assert.match(fs.readFileSync(path.join(root, 'replayed/plain.json'), 'utf8'), /Customer: Recorded customer/);
+        assert.match(fs.readFileSync(path.join(root, 'replayed/vip.json'), 'utf8'), /Customer: VIP Recorded customer/);
+        app.child.kill();
+        assert.match((await stopProxy(root))?.said ?? '', /1 answered from the recording, 1 from the config's mocks, 0 passed on/);
     } finally {
         app?.child.kill();
         await stopProxy(root);

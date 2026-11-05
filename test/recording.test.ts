@@ -57,6 +57,34 @@ test('record the data once, then capture any version from it', async () => {
     }
 });
 
+test('a mock function changes the recorded answer, and answers differently after a write it mocks', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-rec-mock-'));
+    const har = path.join(dir, 'recording.har');
+    const config: Config = { file: path.join(dir, 'redlines.config.mjs'), states: { list: { path: '/index.html' } } };
+    const server = await app('Recorded customer');
+    try {
+        await recordData({ config, base: server.base, file: har, root: dir, log: () => {} });
+        // The recorded orders, refunded once the page has sent the refund; the refund itself mocked.
+        const mocks = {
+            'GET /api/orders': (_request: unknown, { recorded, writes }: { recorded: { status: string }[]; writes: number }) => recorded.map(o => ({ ...o, status: writes ? 'Refunded' : `Still ${o.status}` })),
+            'POST /api/refund': { ok: true },
+        };
+        const refund = async (page: import('playwright-core').Page) => page.evaluate(async () => {
+            await fetch('/api/refund', { method: 'POST' });
+            const [order] = await (await fetch('/api/orders')).json();
+            document.body.insertAdjacentHTML('beforeend', `<p>After the refund: ${order.status}</p>`);
+        });
+        await captureStates({ config: { ...config, recording: 'recording.har', states: { list: { path: '/index.html', mocks, steps: [refund] } } }, base: server.base, out: path.join(dir, 'shots'), root: dir, log: () => {} });
+        const tree = fs.readFileSync(path.join(dir, 'shots/list.json'), 'utf8');
+        assert.match(tree, /Recorded customer/);
+        assert.match(tree, /Still Paid/);
+        assert.match(tree, /After the refund: Refunded/);
+    } finally {
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('a request recorded twice answers with its successful answer (a 401 before a token refresh is skipped)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-rec-'));
     const har = path.join(dir, 'recording.har');

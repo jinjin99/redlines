@@ -5,14 +5,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-core';
+import type { Browser, BrowserContext, Page } from 'playwright-core';
 
 import { keepAuth, LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { configProblems } from './config.js';
 import { type Coverage, watchCoverage } from './coverage.js';
 import { DataWatcher } from './data.js';
+import { isWrite, mockReply, mockTable, recordedJson } from './mocks.js';
 import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
+import { proxyCapturing } from './proxy.js';
 import { loadRecording, Recorder, type Recording, replay } from './recording.js';
 import { freeze } from './page/freeze.js';
 import { snapshot } from './page/snapshot.js';
@@ -29,22 +31,6 @@ export async function loadConfig(file?: string, dir = process.cwd()): Promise<Co
     const problems = configProblems(config);
     if (problems.length) throw new Error(`${found}:\n  ${problems.join('\n  ')}`);
     return { ...config, file: found };
-}
-
-/** "GET /api/items" or "/api/items*" against a request. Paths are matched from the start, `*` is any run of characters. */
-function matcher(pattern: string): (request: Request) => boolean {
-    const [method, route] = /^[A-Z]+\s/.test(pattern) ? pattern.split(/\s+/, 2) : ['*', pattern];
-    const re = new RegExp(`^${route.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
-    return (request: Request) => (method === '*' || request.method() === method) && re.test(new URL(request.url()).pathname);
-}
-
-/** A mock's answer: an object or array is JSON; { status, json | body, headers } says more; a function gets the request. */
-interface Answer { status?: number; json?: unknown; body?: string; headers?: Record<string, string>; contentType?: string }
-
-async function fulfill(route: Route, answer: MockAnswer) {
-    const value: unknown = typeof answer === 'function' ? await answer(route.request()) : answer;
-    const full: Answer = value && typeof value === 'object' && ('json' in value || 'body' in value || 'status' in value) ? (value as Answer) : { json: value };
-    return route.fulfill({ status: full.status ?? 200, headers: full.headers, contentType: full.json !== undefined ? 'application/json' : full.contentType, body: full.json !== undefined ? JSON.stringify(full.json) : full.body ?? '' });
 }
 
 /** Does one step of a state on the page. */
@@ -178,16 +164,30 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
         }
         return route.fulfill({ response, body });
     });
-    const table = Object.entries(mocks).map(([p, answer]) => [matcher(p), answer] as const);
+    const mocked = mockTable(mocks);
     // The page's data, from the first source that has an answer: config mocks, MSW, a recording; else the network.
-    if (table.length || msw || recording) {
+    if (Object.keys(mocks).length || msw || recording) {
+        // Writes (POST, PUT, …) the config's mocks answered: a mock can answer differently after one ("Reopen" →
+        // the reopened claim), and analytics or other writes the recording happens to hold do not count.
+        let writes = 0;
         await page.route('**/*', async route => {
-            const hit = table.find(([test]) => test(route.request()));
-            if (hit) return fulfill(route, hit[1]);
-            const answer = msw && (await mswAnswer(msw.source, msw.handlers, route.request()));
-            if (answer) return route.fulfill(answer);
-            const recorded = recording?.lookup(route.request());
-            return recorded ? route.fulfill(replay(recorded)) : route.fallback();
+            const request = route.request();
+            // What the page gets without the config's mocks: MSW's answer, else the recording's.
+            const underneath = async () => {
+                const answer = msw && (await mswAnswer(msw.source, msw.handlers, request));
+                if (answer) return answer;
+                const recorded = recording?.lookup(request);
+                return recorded ? replay(recorded) : undefined;
+            };
+            const mock = mocked(request);
+            if (mock !== undefined) {
+                const before = writes;
+                if (isWrite(request.method())) writes++;
+                const reply = await mockReply(mock, request, async () => ({ recorded: recordedJson((await underneath())?.body), writes: before }));
+                return route.fulfill(reply);
+            }
+            const answer = await underneath();
+            return answer ? route.fulfill(answer) : route.fallback();
         });
     }
     recorder?.watch(page);
@@ -307,6 +307,8 @@ export async function captureStates({ config, base, out, only, root = process.cw
     try {
         for (const name of names) {
             const state = config.states[name];
+            // A data proxy answering the app's server: this state's mocks now.
+            proxyCapturing(root, name);
             const data = new DataWatcher();
             if (recording) data.addRecording(recording.entries);
             let opened;
@@ -381,6 +383,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
             }
         }
     } finally {
+        proxyCapturing(root, undefined);
         await browser.close();
     }
     const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), ...(source ? { source } : {}), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}), ...(r.data ? { data: `${r.name}.data.json` } : {}) })) };

@@ -86,7 +86,17 @@ The same data on both versions is what makes a comparison mean anything, so redl
 
 Three sources, tried in this order (the first with an answer wins):
 
-1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data.
+1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data. An answer can be a function, given the request and `{ recorded, writes }`: what MSW or the recording would answer (as JSON), and how many writes (POST, PUT, …) the config's mocks answered before. So a state changes one field of the recorded data instead of copying it, and a page answers differently after it sends one:
+
+   ```js
+   const CLAIM = 'GET /api/claims/c1';
+   states: {
+       rejected: { path: '/claims/c1', mocks: {
+           [CLAIM]: (_request, { recorded, writes }) => ({ ...recorded, status: writes ? 'under_review' : 'rejected' }),
+           'POST /api/claims/c1/reopen': { ok: true },
+       }, steps: [{ click: 'text=Reopen claim' }, { click: 'role=dialog >> text=Reopen claim' }] },
+   },
+   ```
 2. **Your MSW handlers**: if the project already mocks with [MSW](https://mswjs.io) (2.4 or later), point at the module:
 
    ```js
@@ -125,7 +135,7 @@ npx redlines record_data --base http://localhost:3000   # the browser side, into
 npx redlines data_proxy --action stop                   # saves the recording
 ```
 
-Then the same with `--mode replay`, and `recording` set in the config, for every capture after. `data_proxy --action stop` says how many requests were answered from the recording and how many passed on to the backend (with a list of the ones the recording lacks in `.redlines/data-proxy.log`), so a replay that quietly went to the backend shows.
+Then the same with `--mode replay`, and `recording` set in the config, for every capture after. Under `capture_change` (`app.dataProxy`), the proxy also answers the config's `mocks`, and those of the state being captured, so a state's data reaches a server-rendered page too. `data_proxy --action stop` says how many requests were answered from the recording and how many passed on to the backend (with a list of the ones the recording lacks in `.redlines/data-proxy.log`), so a replay that quietly went to the backend shows.
 
 HTTPS is read by acting as the backend towards the dev server, with a certificate from a certificate authority made for this proxy alone (`.redlines/proxy-ca/`, the key readable only by you), which only that dev server is told to trust, through `NODE_EXTRA_CA_CERTS`. Nothing is installed system-wide, and the browser is not involved. Node sends its own `fetch` and `http` through the variables from 22.21 / 24.5 on (`NODE_USE_ENV_PROXY`); clients such as axios read `HTTP(S)_PROXY` themselves. `localhost` is left out, so the dev server's calls to itself are untouched.
 

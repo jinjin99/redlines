@@ -82,7 +82,7 @@ export type Step =
     | { wait: number }
     | ((page: import('playwright-core').Page) => unknown);
 
-/** JSON data, { status, json | body, headers }, or a function of the request. */
+/** JSON data, { status, json | body, headers }, or a function of the request and { recorded, writes } (what MSW or the recording would answer, and how many writes the config's mocks answered before). */
 export type MockAnswer = unknown;
 
 export interface StateConfig {

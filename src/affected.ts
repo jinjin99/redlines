@@ -129,6 +129,46 @@ function coverageOf(folder: string): Map<string, Coverage> {
 }
 
 const CODE = /\.(m?[jt]sx?|vue|svelte)$/;
+
+// A statement that is no code to run: an import, a re-export, a type declaration.
+const DECLARATION = /^(import\b|export\s+(type\s+)?\{|export\s+\*|(export\s+)?(declare\s+)?(interface|type)\s+\w|declare\s)/;
+
+/**
+ * The lines of a script that hold no code to run: imports, re-exports, type declarations, comments and
+ * blank lines. For a file no state loaded, where coverage cannot say which lines are code.
+ */
+/** `ranges` without the lines of `file` that hold no code to run (the file unreadable: all of them). */
+function withoutDeclarations(ranges: [number, number][], file: string): [number, number][] {
+    let text: string;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { return ranges; }
+    const skip = declarationLines(text);
+    const out: [number, number][] = [];
+    for (const [a, b] of ranges) for (let l = a; l <= b; l++) if (!skip.has(l)) out.push([l, l]);
+    return merge(out);
+}
+
+export function declarationLines(text: string): Set<number> {
+    const out = new Set<number>();
+    const lines = text.split('\n');
+    let open = false, depth = 0, comment = false;
+    lines.forEach((line, i) => {
+        const t = line.trim();
+        if (comment || t.startsWith('/*')) {
+            out.add(i + 1);
+            comment = !t.includes('*/');
+            return;
+        }
+        if (!open && (!t || t.startsWith('//'))) { out.add(i + 1); return; }
+        if (!open && !DECLARATION.test(t)) return;
+        open = true;
+        out.add(i + 1);
+        depth += (t.match(/[{(<]/g) ?? []).length - (t.match(/[})>]/g) ?? []).length + (t.match(/=>/g) ?? []).length;
+        // Ends where its brackets close and the statement does: a semicolon, a closing brace, a from clause; or no semicolons, and the next line goes on to something else.
+        const next = lines[i + 1]?.trim() ?? '';
+        if (depth <= 0 && (/[;}]$|\bfrom\s+['"][^'"]+['"]/.test(t) || !/^[|&=.?:]/.test(next))) { open = false; depth = 0; }
+    });
+    return out;
+}
 /** Generated files (a router's route tree, API clients): every state runs them, so they say nothing about where a change shows. */
 const GENERATED = /\.gen\.|\.generated\.|(^|\/)(__generated__|generated)\//;
 
@@ -171,8 +211,8 @@ export function affectedStates({ dir, base, after, before, states }: { dir: stri
     const unreached = code
         .map(c => {
             const loaded = executable.has(c.file);
-            // A loaded file: only its changed lines of code count; one no state loaded is all unknown.
-            const lines = subtract(loaded ? overlaps(c.added, executable.get(c.file)!) : c.added, reachedNew.get(c.file) ?? []);
+            // A loaded file: only its changed lines of code count; one no state loaded, all but its imports, types and comments.
+            const lines = subtract(loaded ? overlaps(c.added, executable.get(c.file)!) : withoutDeclarations(c.added, path.join(dir, c.file)), reachedNew.get(c.file) ?? []);
             return { file: c.file, lines: merge(lines), loaded };
         })
         .filter(u => u.lines.length);

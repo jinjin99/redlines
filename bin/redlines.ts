@@ -48,11 +48,14 @@ function parse(tool: Tool, argv: string[]): Record<string, unknown> {
         if (raw === undefined) throw new Error(`--${name} needs a value`);
         if (kind === 'ZodNumber') args[name] = Number(raw);
         else if (kind === 'ZodArray' || kind === 'ZodRecord' || kind === 'ZodObject') {
-            try { args[name] = JSON.parse(raw); } catch (e) {
+            let value: unknown;
+            try { value = JSON.parse(raw); } catch (e) {
                 // A list of plain words can be given comma-separated (--states list,details).
-                if (kind === 'ZodArray' && /^[\w,-]+$/.test(raw)) args[name] = raw.split(',');
+                if (kind === 'ZodArray' && /^[\w,-]+$/.test(raw)) value = raw.split(',');
                 else throw new Error(`--${name} is JSON: ${(e as Error).message}`, { cause: e });
             }
+            // A list given more than once (--states a --states b): all of them.
+            args[name] = kind === 'ZodArray' && Array.isArray(args[name]) ? [...(args[name] as unknown[]), ...(Array.isArray(value) ? value : [value])] : value;
         } else args[name] = raw;
     }
     return z.object(tool.input).strict().parse(args);
@@ -63,9 +66,9 @@ async function main() {
     // The data proxy's own process (data_proxy start runs it in the background).
     if (command === '__data_proxy') {
         const { runProxy } = await import('../src/proxy.js');
-        const [mode, file, port] = argv;
-        if ((mode !== 'record' && mode !== 'replay') || !file || !Number(port)) throw new Error('__data_proxy <record|replay> <file> <port>');
-        await runProxy({ root: process.cwd(), mode, file, port: Number(port) });
+        const [mode, file, port, config] = argv;
+        if ((mode !== 'record' && mode !== 'replay') || !file || !Number(port)) throw new Error('__data_proxy <record|replay> <file> <port> [config]');
+        await runProxy({ root: process.cwd(), mode, file, port: Number(port), config });
         return;
     }
     if (command === 'mcp') {

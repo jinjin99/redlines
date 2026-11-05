@@ -117,3 +117,11 @@ test('the base checkout shares installed dependencies, but a monorepo\'s own pac
     assert.equal(fs.realpathSync(path.join(at, 'node_modules/@org/kit')), fs.realpathSync(path.join(repo, 'node_modules/@org/kit')));
     assert.match(fs.readFileSync(path.join(at, 'node_modules/ui/index.js'), 'utf8'), /before/);
 });
+
+test('in a file no state loaded, imports, re-exports, types and comments are not changes to see', async () => {
+    const { declarationLines } = await import('../src/affected.js');
+    const source = ['import a from "x";', 'import {', '  b,', '} from "y";', 'export type T =', '  | "a"', '  | "b";', 'const x = 1;', 'interface I {', '  f: (a: string) => void;', '}', '// why', 'function g() {', '  return 2;', '}', 'export { g };', 'export const h = () => 3;'].join('\n');
+    const skipped = declarationLines(source);
+    const code = source.split('\n').map((_, i) => i + 1).filter(l => !skipped.has(l));
+    assert.deepEqual(code, [8, 13, 14, 15, 17]);
+});
