@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- **Canvas images**: images from other sites (a CDN's icons and logos) are fetched on export and become files beside the artboards, since a canvas loads none (one that cannot be fetched is said); an inline SVG whose text holds a parenthesis or a quote (a Sketch comment) is taken whole, not cut off into a broken file.
+
 ## 0.4.0
 
 From a branch to what it changes, in one call: redlines runs both versions of the app itself, names the states the code change reaches and the changed code no state shows yet, and a state's data can be the recording with one field changed. Then checked by two blind runs of an agent that had only the docs, on a real server-rendered app; what it hit is fixed below.

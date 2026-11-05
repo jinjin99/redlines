@@ -91,9 +91,49 @@ class Component extends DCLogic {
 `;
 }
 
-// An image as a data URL, in an attribute or a CSS url(): its type, whether base64, its data.
-const DATA_IMAGE = /data:(image\/(?:svg\+xml|png|jpeg|gif|webp));?(base64)?,([^"')\s]+)/g;
+// An image as a data URL, ended by the quote it opened with (an SVG's text may hold parentheses and the
+// other quote), or unquoted in a CSS url(): its type, whether base64, its data.
+const QUOTED_DATA_IMAGE = /(["'])data:(image\/(?:svg\+xml|png|jpeg|gif|webp))(?:;[\w-]+=[\w.-]+)*(;base64)?,(.*?)\1/g;
+const BARE_DATA_IMAGE = /url\(data:(image\/(?:svg\+xml|png|jpeg|gif|webp))(?:;[\w-]+=[\w.-]+)*(;base64)?,([^)\s]*)\)/g;
+// An image from another site, in an attribute or a CSS url(): a canvas loads none.
+const REMOTE_IMAGE = /(src=|url\(\s*)(["']?)(https?:\/\/[^"')\s]+)\2/g;
 const EXT: Record<string, string> = { 'image/svg+xml': 'svg', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const unescapeHtml = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/** A data URL's bytes. */
+function dataBytes(base64: string | undefined, data: string): Buffer {
+    if (base64) return Buffer.from(data, 'base64');
+    try { return Buffer.from(decodeURIComponent(data)); } catch { return Buffer.from(data); }
+}
+
+/** Every data-URL image in `text` as a file (asset() decides); `html`: the text is markup, its attribute values escaped. */
+function dataImagesToFiles(text: string, html: boolean, file: (mime: string, bytes: Buffer) => string | undefined): string {
+    return text
+        .replace(QUOTED_DATA_IMAGE, (whole, q: string, mime: string, base64: string | undefined, data: string) => {
+            const name = file(mime, dataBytes(base64, html ? unescapeHtml(data) : data));
+            return name ? `${q}${name}${q}` : whole;
+        })
+        .replace(BARE_DATA_IMAGE, (whole, mime: string, base64: string | undefined, data: string) => {
+            const name = file(mime, dataBytes(base64, data));
+            return name ? `url(${name})` : whole;
+        });
+}
+
+/** The images from other sites `texts` name: fetched (public ones, an image type, up to 5 MB), by address. */
+async function remoteImages(texts: string[]): Promise<Map<string, { mime: string; bytes: Buffer }>> {
+    const urls = new Set(texts.flatMap(t => [...t.matchAll(REMOTE_IMAGE)].map(m => unescapeHtml(m[3]))));
+    const got = new Map<string, { mime: string; bytes: Buffer }>();
+    await Promise.all([...urls].map(async url => {
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+            const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim();
+            if (!res.ok || !EXT[mime]) return;
+            const bytes = Buffer.from(await res.arrayBuffer());
+            if (bytes.length <= 5 * 1024 * 1024) got.set(url, { mime, bytes });
+        } catch { /* left as it is, and said */ }
+    }));
+    return got;
+}
 
 /** An image written once to project/assets/ (named by its content); its path from an artboard. */
 function asset(project: string, mime: string, bytes: Buffer, written: string[]): string | undefined {
@@ -118,7 +158,7 @@ function asset(project: string, mime: string, bytes: Buffer, written: string[]):
  * Writes the export; returns { files, notes }: the files written, relative to `out`, and what a person
  * has to finish by hand (a canvas takes no inline images: they are uploaded as its assets).
  */
-export function exportDesign(dir: string, out: string, { format = 'html', title }: { format?: 'html' | 'dc'; title?: string } = {}): { files: string[]; notes: string[]; links: string[] } {
+export async function exportDesign(dir: string, out: string, { format = 'html', title }: { format?: 'html' | 'dc'; title?: string } = {}): Promise<{ files: string[]; notes: string[]; links: string[] }> {
     const states = statesOf(dir);
     const written: string[] = [], notes: string[] = [];
     const titleOf = (name: string) => states.find(s => s.name === name)?.title ?? name;
@@ -145,11 +185,22 @@ export function exportDesign(dir: string, out: string, { format = 'html', title 
         const width = tree.viewport.width, height = Math.max(tree.viewport.height, tree.size.height);
         const file = `${s.name}.dc.html`;
         const parts = partsOf(fs.readFileSync(path.join(dir, s.html), 'utf8'));
-        // A canvas takes no inline images: each becomes a file beside the artboards (assets/<hash>.<ext>).
-        parts.body = parts.body.replace(DATA_IMAGE, (whole, mime: string, base64: string | undefined, data: string) => asset(project, mime, base64 ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data)), written) ?? whole);
-        parts.css = parts.css.replace(DATA_IMAGE, (whole, mime: string, base64: string | undefined, data: string) => asset(project, mime, base64 ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data)), written) ?? whole);
+        // A canvas takes no inline images and loads none from other sites: each becomes a file beside the artboards (assets/<hash>.<ext>).
+        const toFile = (mime: string, bytes: Buffer) => asset(project, mime, bytes, written);
+        parts.body = dataImagesToFiles(parts.body, true, toFile);
+        parts.css = dataImagesToFiles(parts.css, false, toFile);
+        const remote = await remoteImages([parts.body, parts.css]);
+        const swap = (_whole: string, lead: string, q: string, url: string) => {
+            const got = remote.get(unescapeHtml(url));
+            const name = got && toFile(got.mime, got.bytes);
+            return `${lead}${q}${name ?? url}${q}`;
+        };
+        parts.body = parts.body.replace(REMOTE_IMAGE, swap);
+        parts.css = parts.css.replace(REMOTE_IMAGE, swap);
         const inline = (parts.body.match(/src="data:/g) ?? []).length + (parts.css.match(/url\("data:/g) ?? []).length;
         if (inline) notes.push(`${file}: ${inline} inline image${inline === 1 ? '' : 's'} of a kind a canvas can't hold; upload them as canvas assets`);
+        const away = new Set([...parts.body.matchAll(REMOTE_IMAGE), ...parts.css.matchAll(REMOTE_IMAGE)].map(m => new URL(unescapeHtml(m[3])).host));
+        if (away.size) notes.push(`${file}: images from ${[...away].join(', ')} could not be fetched; a canvas will not show them`);
         // Beside the canvas, not in it: the page text that came from data, for find_design_edits.
         if (s.data) { fs.mkdirSync(path.join(out, 'data'), { recursive: true }); fs.copyFileSync(path.join(dir, s.data), path.join(out, 'data', `${s.name}.json`)); }
         fs.writeFileSync(path.join(project, file), artboard({ title: s.title, parts, width, height, links: hotspots(s.links!, titleOf, n => `${n}.dc.html`) }));

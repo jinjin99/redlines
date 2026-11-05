@@ -19,6 +19,6 @@ for (const side of ['before', 'after'] as const) {
 const states = findChanges(path.join(out, 'before'), path.join(out, 'after'));
 for (const s of states) if (s.changes.length) console.log(`\n### ${s.title}\n${formatChanges(s.changes)}`);
 const report = writeReport(states, path.join(out, 'review'), { title: 'Orders: refunds' });
-const { files } = exportDesign(path.join(out, 'after'), path.join(out, 'design'), { format: 'dc', title: 'Orders (after)' });
+const { files } = await exportDesign(path.join(out, 'after'), path.join(out, 'design'), { format: 'dc', title: 'Orders (after)' });
 console.log(`\nreview page: ${report}\nClaude Design canvas: ${path.join(out, 'design')} (${files.length} files)`);
 

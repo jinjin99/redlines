@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -35,7 +37,7 @@ test('export: the pages click through, and the canvas plays', async () => {
     assert.ok(list.links[0].box[2] > 0);
 
     const html = path.join(out, 'html-links');
-    assert.deepEqual(exportDesign(after, html, { format: 'html' }).links, ['list → details (text=#1001)', 'details → list (#close)']);
+    assert.deepEqual((await exportDesign(after, html, { format: 'html' })).links, ['list → details (text=#1001)', 'details → list (#close)']);
     const browser = await launch();
     try {
         const page = await browser.newPage({ viewport: { width: 1024, height: 700 } });
@@ -50,7 +52,7 @@ test('export: the pages click through, and the canvas plays', async () => {
     }
 
     const dc = path.join(out, 'dc-links');
-    exportDesign(after, dc, { format: 'dc' });
+    await exportDesign(after, dc, { format: 'dc' });
     const board = fs.readFileSync(path.join(dc, 'project/list.dc.html'), 'utf8');
     assert.match(board, /<a href="details\.dc\.html" data-redlines-link="details" aria-label="Order details dialog" style="position: absolute; left: \d+px/);
     const canvas = JSON.parse(fs.readFileSync(path.join(dc, 'project/canvas.json'), 'utf8'));
@@ -60,7 +62,7 @@ test('export: the pages click through, and the canvas plays', async () => {
 test('find_design_edits: a designer\'s edits on the canvas, as changes', async () => {
     const { after, out } = await fixtureShots();
     const exported = path.join(out, 'design');
-    exportDesign(after, exported, { format: 'dc' });
+    await exportDesign(after, exported, { format: 'dc' });
     const edited = path.join(out, 'design-edited');
     fs.cpSync(exported, edited, { recursive: true });
     // As the canvas saves them: copy retyped, a padding changed in the properties panel, the links moved about, an artboard added.
@@ -85,7 +87,7 @@ test('find_design_edits: a designer\'s edits on the canvas, as changes', async (
     assert.match(added.outline!, /No orders yet/);
 });
 
-test('export: inline images become files beside the artboards (a plain DOCTYPE dropped)', () => {
+test('export: inline images become files beside the artboards (a plain DOCTYPE dropped)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-img-'));
     const svg = '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>';
     const html = `<!doctype html><html><head><style>\n.a{background:url("data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}")}</style></head><body><img src="data:image/svg+xml,${encodeURIComponent(svg)}"></body></html>`;
@@ -93,7 +95,7 @@ test('export: inline images become files beside the artboards (a plain DOCTYPE d
     fs.writeFileSync(path.join(dir, 'home.json'), JSON.stringify({ viewport: { width: 400, height: 300 }, size: { width: 400, height: 300 } }));
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ tool: 'redlines', version: 1, states: [{ name: 'home', title: 'Home', tree: 'home.json', image: 'home.png', html: 'home.html' }] }));
     const out = path.join(dir, 'design');
-    const { files, notes } = exportDesign(dir, out, { format: 'dc' });
+    const { files, notes } = await exportDesign(dir, out, { format: 'dc' });
     const assets = files.filter(f => f.startsWith('project/assets/'));
     assert.equal(assets.length, 1);
     assert.deepEqual(notes, []);
@@ -101,4 +103,35 @@ test('export: inline images become files beside the artboards (a plain DOCTYPE d
     assert.ok(!board.includes('data:image'));
     assert.ok(board.includes(`src="${assets[0].slice('project/'.length)}"`));
     assert.ok(!fs.readFileSync(path.join(out, assets[0]), 'utf8').includes('DOCTYPE'));
+});
+
+test('export: an inline SVG with parentheses and quotes in it, and images from other sites, become files too', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-img2-'));
+    const icon = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><!-- Generator: Sketch 52 (66869) - it\'s "drawn" --><rect width="4" height="4"/></svg>';
+    const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+    const server = http.createServer((req, res) => {
+        if (req.url === '/nav.svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); res.end(icon.replace('Sketch', 'Nav')); return; }
+        if (req.url === '/logo.png') { res.writeHead(200, { 'content-type': 'image/png' }); res.end(png); return; }
+        res.writeHead(404); res.end();
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const cdn = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+        const html = `<!doctype html><html><head><style>\n.logo{background:url(${cdn}/logo.png)}</style></head><body><img src="data:image/svg+xml,${encodeURIComponent(icon).replace(/'/g, '&#39;')}"><img src="${cdn}/nav.svg"><img src="${cdn}/gone.png"></body></html>`;
+        fs.writeFileSync(path.join(dir, 'home.html'), html);
+        fs.writeFileSync(path.join(dir, 'home.json'), JSON.stringify({ viewport: { width: 400, height: 300 }, size: { width: 400, height: 300 } }));
+        fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ tool: 'redlines', version: 1, states: [{ name: 'home', title: 'Home', tree: 'home.json', image: 'home.png', html: 'home.html' }] }));
+        const out = path.join(dir, 'design');
+        const { files, notes } = await exportDesign(dir, out, { format: 'dc' });
+        const assets = files.filter(f => f.startsWith('project/assets/')).map(f => f.slice('project/'.length));
+        assert.equal(assets.length, 3);
+        const board = fs.readFileSync(path.join(out, 'project/home.dc.html'), 'utf8');
+        for (const a of assets) assert.ok(board.includes(a), a);
+        assert.ok(!board.includes('data:image') && !board.includes(`${cdn}/nav.svg`) && !board.includes(`${cdn}/logo.png`));
+        // The whole SVG, comment and all.
+        assert.ok(assets.some(a => fs.readFileSync(path.join(out, 'project', a), 'utf8') === icon));
+        // One that could not be fetched stays, and is said.
+        assert.ok(board.includes(`${cdn}/gone.png`));
+        assert.match(notes.join('\n'), /could not be fetched/);
+    } finally { server.close(); }
 });

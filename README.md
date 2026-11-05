@@ -20,14 +20,14 @@ It is not pixel diffing. redlines reads the rendered page: elements, text, the s
 
 ## Quick start
 
-Install it from GitHub (it builds itself on install; `#v0.4.0` pins a release, `#main` follows the latest):
+Install it from GitHub (it builds itself on install; `#v0.4.1` pins a release, `#main` follows the latest):
 
 ```bash
-npm install --save-dev github:jinjin99/redlines#v0.4.0
+npm install --save-dev github:jinjin99/redlines#v0.4.1
 npx playwright-core install chromium   # if you don't have a Chromium from Playwright already
 ```
 
-Or run it without installing: `npx -y github:jinjin99/redlines#v0.4.0 <tool> …` (the first run installs it, which takes a minute or two). The examples below write `redlines <tool>`: with npx, put `npx -y github:jinjin99/redlines` in front instead.
+Or run it without installing: `npx -y github:jinjin99/redlines#v0.4.1 <tool> …` (the first run installs it, which takes a minute or two). The examples below write `redlines <tool>`: with npx, put `npx -y github:jinjin99/redlines` in front instead.
 
 Describe the states to look at in `redlines.config.mjs`:
 
@@ -238,8 +238,8 @@ redlines serve                      # http://127.0.0.1:8790/p/claim-reopen/ to t
 `redlines mcp` serves the same tools over stdio, with instructions telling the agent when to use them: `view_page` on every page it changed before saying it is done; to show a change, capture the app before (main branch) and after (its working copy), find the changes, and hand over the review page. Its `draft_design` prompt walks a requirement from code to a canvas a designer edits, and back.
 
 ```bash
-claude mcp add redlines -- npx -y github:jinjin99/redlines#v0.4.0 mcp
-# other MCP clients: command "npx", args ["-y", "github:jinjin99/redlines#v0.4.0", "mcp"]
+claude mcp add redlines -- npx -y github:jinjin99/redlines#v0.4.1 mcp
+# other MCP clients: command "npx", args ["-y", "github:jinjin99/redlines#v0.4.1", "mcp"]
 ```
 
 Run it from the project folder.

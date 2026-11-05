@@ -407,7 +407,7 @@ export const TOOLS: Tool[] = [
         input: { from: z.string().describe('A captured folder'), out: z.string().optional().describe('Default .redlines/design'), format: z.enum(['dc', 'html']).optional(), title: z.string().max(200).optional() },
         async run({ from, out, format, title }, { root }) {
             const dir = inProject(root, out, '.redlines/design');
-            const { files, notes, links } = exportDesign(inProject(root, from), dir, { format: format ?? 'dc', title });
+            const { files, notes, links } = await exportDesign(inProject(root, from), dir, { format: format ?? 'dc', title });
             const flow = links.length ? `\nlinks (click through the pages, or Play on the canvas):\n  ${links.join('\n  ')}` : '\nno links: states that continue another\'s steps, or a state\'s links in the config, join them into a flow';
             return { text: `${dir}\n  ${files.join('\n  ')}${flow}${notes.length ? `\nto finish by hand:\n  ${notes.join('\n  ')}` : ''}` };
         },

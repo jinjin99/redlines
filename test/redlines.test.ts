@@ -136,7 +136,7 @@ test('export: a Claude Design canvas, one artboard per state', async () => {
     const { exportDesign } = await import('../src/export.js');
     const { after, out } = await fixtureShots();
     const dir = path.join(out, 'dc');
-    const { files } = exportDesign(after, dir, { format: 'dc', title: 'Orders' });
+    const { files } = await exportDesign(after, dir, { format: 'dc', title: 'Orders' });
     assert.deepEqual(files, ['project/canvas.json', 'project/list.dc.html', 'project/details.dc.html']);
     const index = JSON.parse(fs.readFileSync(path.join(dir, 'project/canvas.json'), 'utf8'));
     assert.deepEqual(index.order, ['list.dc.html', 'details.dc.html']);
