@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+From a branch to what it changes, in one call: redlines runs both versions of the app itself, names the states the code change reaches and the changed code no state shows yet, and a state's data can be the recording with one field changed. Then checked by two blind runs of an agent that had only the docs, on a real server-rendered app; what it hit is fixed below.
 
 - From a second blind run: a state whose page went to another address (no steps, yet elsewhere) is flagged in the capture and in `capture_change`, which says to capture it again; a state continues another (and is linked from it) only with the same data, so "the empty list, then a click" is no longer linked from the list with data; a link not on the page is a `note`, not an unlabelled line; mocks match method and path, a POST's body only through a function (documented).
 - Found by an agent running `capture_change` on a real app with only the docs: the build no longer runs behind the data proxy (a codegen fetching its schema was answered from the recording); a failed build says why (the end of its log) and `capture_change` says it is building first; a port already in use is said as such, before the data proxy starts; the data proxy has 60 s to load a big recording and is stopped if it doesn't start; mockttp is a dependency, so `npx github:jinjin99/redlines` has the data proxy; a state only the changed version can reach is listed as new with the change, not as a failure; differences in a state the code change does not run in are marked as coming from the captures; generated files are not counted as changed files; mock paths are documented as matching whole.
