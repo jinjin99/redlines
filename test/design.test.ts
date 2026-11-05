@@ -20,6 +20,11 @@ test('links: a state continuing another\'s steps is linked from it; the config a
     const deeper = { ...config, states: { ...config.states, confirm: { path: '/index.html', steps: [{ click: 'text=#1001' }, { fill: ['#note', 'x'] as [string, string] }, { click: '#ok' }] } } };
     assert.deepEqual(linksFrom(deeper, 'details').map(l => l.to), ['list', 'confirm']);
     assert.ok(!linksFrom(deeper, 'list').some(l => l.to === 'confirm'));
+    // Clicking on in the empty list continues the empty list, not the list with orders on the same page.
+    const empty = { 'GET /api/orders': [] };
+    const emptyFlow = { ...config, states: { ...config.states, empty: { path: '/index.html', mocks: empty }, emptyHelp: { path: '/index.html', mocks: empty, steps: [{ click: 'text=Help' }] } } };
+    assert.ok(!linksFrom(emptyFlow, 'list').some(l => l.to === 'emptyHelp'));
+    assert.deepEqual(linksFrom(emptyFlow, 'empty'), [{ selector: 'text=Help', to: 'emptyHelp' }]);
 });
 
 test('export: the pages click through, and the canvas plays', async () => {

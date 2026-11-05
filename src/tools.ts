@@ -142,7 +142,7 @@ async function captureChange({ config, root, dir, only, fresh, log }: { config: 
         const kept = fs.existsSync(path.join(before, 'manifest.json')) ? (JSON.parse(fs.readFileSync(path.join(before, 'manifest.json'), 'utf8')) as Manifest) : undefined;
         const wanted = only?.length ? only : Object.keys(config.states);
         const current = !fresh && kept?.source?.commit === base && kept.source.inputs === inputs && wanted.every(n => kept.states.some(s => s.name === n));
-        const results: { side: string; name: string; ok: boolean; error?: string; errors?: string[] }[] = [];
+        const results: { side: string; name: string; ok: boolean; error?: string; errors?: string[]; moved?: string }[] = [];
         if (current) log(`before: kept (base ${base.slice(0, 10)}, same config and data)`);
         else for (const r of await version('before', baseCheckout(root, dir, base), { commit: base, inputs })) results.push({ side: 'before', ...r });
         const head = headOf(dir);
@@ -251,7 +251,10 @@ export const TOOLS: Tool[] = [
             // A page whose requests came back 401 shows a login or an error, not the state.
             const denied = done.results.filter(r => r.ok && r.errors?.some(e => /\b401\b/.test(e))).map(r => `${r.side} ${r.name}`);
             const affected = affectedStates({ dir: done.dir, base: done.base, after: done.after, before: done.before, states });
+            // A state whose page went somewhere else: its differences are of the wrong page.
+            const moved = done.results.filter(r => r.ok && r.moved).map(r => `! ${r.side} ${r.name}: the app went to ${r.moved} instead of the state's page, so its capture is of that page. Capture it again (states: ["${r.name}"]${r.side === 'before' ? ', fresh' : ''}); if it keeps happening, the page needs something the config does not give it (data, a login, a setting).`);
             const parts = [
+                ...(moved.length ? [...moved, ''] : []),
                 ...(denied.length ? [`! The app was refused (401) on ${denied.join(', ')}: the login has probably expired, so those pages may show an error or a login instead of the state. Log in again (log_in) and run this again with fresh.`, ''] : []),
                 `before: ${done.kept ? 'kept' : 'captured'} (${done.base.slice(0, 10)}) → ${path.relative(root, done.before)}; after: the working copy → ${path.relative(root, done.after)}`,
                 ...failed.map(r => `FAIL ${r.side} ${r.name}: ${r.error}`),
@@ -259,7 +262,7 @@ export const TOOLS: Tool[] = [
                 '', '## What changed', changesText(done.before, done.after, new Set(affected.untouched.filter(n => !affected.noCoverage.includes(n)))),
                 '', '## Which states the code change reaches', formatAffected(affected),
             ];
-            return { text: parts.join('\n'), isError: failed.length > 0 || denied.length > 0 };
+            return { text: parts.join('\n'), isError: failed.length > 0 || denied.length > 0 || moved.length > 0 };
         },
     },
     {

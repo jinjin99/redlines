@@ -86,7 +86,7 @@ The same data on both versions is what makes a comparison mean anything, so redl
 
 Three sources, tried in this order (the first with an answer wins):
 
-1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data. An answer can be a function, given the request and `{ recorded, writes }`: what MSW or the recording would answer (as JSON), and how many writes (POST, PUT, …) the config's mocks answered before. So a state changes one field of the recorded data instead of copying it, and a page answers differently after it sends one:
+1. **`mocks` in the config**: `{ "GET /api/orders": [...] }`. For a few endpoints, or to pin one state's data. An answer can be a function, given the request and `{ recorded, writes }`: what MSW or the recording would answer (as JSON), and how many writes (POST, PUT, …) the config's mocks answered before. So a state changes one field of the recorded data instead of copying it, and a page answers differently after it sends one. A mock matches the method and path only; a POST's body (a search, a GraphQL query) does not take part, but a function can read it (`request.postData()`) and answer by it:
 
    ```js
    const CLAIM = 'GET /api/claims/c1';
@@ -214,6 +214,8 @@ redlines capture_change --app ../my-app-feature
 4. **What no state shows.** Changed lines no state ran are listed apart: a new dialog, an error branch, an empty list. Either list a state that shows it, or ask what should happen there. Files no state even loaded are marked (server code, or a page none of the states opens).
 
 A state for it usually needs other data and a click: a mock function changes the one field of the recorded answer that matters (`{ ...recorded, note: LONG_NOTE }`, see [mock data](#mock-data)), and steps open what is behind the click. Write the steps for the changed version: where the version before cannot do them (the button is new), the state is listed as new with the change, not as a failure. A state the code change does not run in that still shows differences is marked as such: they come from the two captures, not from the change.
+
+A state whose page went somewhere else (a redirect, a guard: no steps, yet another address) is flagged, since its capture is of that other page. To capture some states again, both versions: `capture_change --states a,b --fresh`; the others are kept. A state is linked from the one it continues (same page, same data, its steps first, then a click); give it other data ("the list, empty") and it continues only states with that data. Coverage is by line: a line that rendered a button counts as run even if its `onClick` never did, so a click worth seeing needs a state that clicks.
 
 ## Prototypes
 

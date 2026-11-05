@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -143,4 +145,19 @@ test('a failed build says why', async () => {
     const { startApp } = await import('../src/app.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-build-'));
     await assert.rejects(startApp({ dir, build: 'echo "schema fetch failed: 403" && exit 3', start: 'true', port: await freePort() }, { cwd: dir, log: path.join(dir, 'app.log') }), /exit 3[\s\S]*schema fetch failed: 403/);
+});
+
+test('a state whose page went somewhere else says so', async () => {
+    const { captureStates } = await import('../src/capture.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redlines-moved-'));
+    fs.writeFileSync(path.join(dir, 'settings.html'), '<!doctype html><script>location.replace("/home.html")</script>');
+    fs.writeFileSync(path.join(dir, 'home.html'), '<!doctype html><h1>Home</h1>');
+    const server = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(fs.readFileSync(path.join(dir, new URL(req.url ?? '/', 'http://x').pathname.slice(1) || 'home.html'))); });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const lines: string[] = [];
+    try {
+        const [result] = await captureStates({ config: { file: path.join(dir, 'redlines.config.mjs'), states: { settings: { path: '/settings.html' } } }, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, out: path.join(dir, 'out'), root: dir, log: l => lines.push(l) });
+        assert.equal(result.moved, '/home.html');
+        assert.ok(lines.some(l => /opened \/settings\.html but the app went to \/home\.html/.test(l)), lines.join('\n'));
+    } finally { server.close(); }
 });

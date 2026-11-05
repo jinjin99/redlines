@@ -255,19 +255,21 @@ const stepKey = (s: Step) => (typeof s === 'function' ? `function ${s.toString()
 
 /**
  * Where clicking goes from state `name`: the config's own links, and each state that continues this
- * one's steps on the same page (its steps start with all of this one's, then a click): that click,
- * to it. A state continuing several is linked from the one it continues furthest.
+ * one's steps on the same page with the same data (its steps start with all of this one's, then a
+ * click): that click, to it. A state continuing several is linked from the one it continues furthest.
  */
 export function linksFrom(config: Config, name: string): { selector: string; to: string }[] {
     const states = Object.entries(config.states);
     const at = (s: Config['states'][string]) => s.path ?? '/';
+    // Its data: the same mocks (a function by its code) and MSW handlers, or it is another page state ("the list, empty").
+    const dataOf = (s: Config['states'][string]) => JSON.stringify([s.msw ?? null, Object.entries(s.mocks ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, typeof v === 'function' ? v.toString() : v])]);
     const links = Object.entries(config.states[name].links ?? {}).map(([selector, to]) => ({ selector, to }));
     for (const [other, s] of states) {
         if (other === name) continue;
         const steps = s.steps ?? [];
         // The state it continues furthest: same page, every one of its steps first.
         const parent = states
-            .filter(([n, p]) => n !== other && at(p) === at(s) && (p.steps ?? []).length < steps.length && (p.steps ?? []).every((x, i) => stepKey(x) === stepKey(steps[i])))
+            .filter(([n, p]) => n !== other && at(p) === at(s) && dataOf(p) === dataOf(s) && (p.steps ?? []).length < steps.length && (p.steps ?? []).every((x, i) => stepKey(x) === stepKey(steps[i])))
             .sort((x, y) => (y[1].steps ?? []).length - (x[1].steps ?? []).length)[0];
         if (parent?.[0] !== name) continue;
         const click = steps.slice((parent[1].steps ?? []).length).find((x): x is { click: string } => typeof x === 'object' && 'click' in x);
@@ -288,7 +290,7 @@ async function boxOf(page: Page, selector: string): Promise<Box | undefined> {
 }
 
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
-export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[]; data?: boolean }
+export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[]; data?: boolean; /** Where the page went instead of its path (a state without steps). */ moved?: string }
 
 export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log, source }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void; source?: Manifest['source'] }): Promise<CaptureResult[]> {
     const baseURL = base ?? config.baseURL;
@@ -336,7 +338,11 @@ export async function captureStates({ config, base, out, only, root = process.cw
                 continue;
             }
             const { context, page, errors } = opened;
+            const asked = new URL(state.path ?? '/', baseURL);
             try {
+                // No steps, yet another page: the app sent it away (a redirect, a guard, a page that failed), and what follows is that page.
+                const landed = new URL(page.url());
+                const moved = !state.steps?.length && landed.pathname.replace(/\/$/, '') !== asked.pathname.replace(/\/$/, '') ? landed.pathname : undefined;
                 // Which source lines the state ran (its page as loaded and its steps), before anything else runs on it.
                 if (opened.coverage) fs.writeFileSync(path.join(out, `${name}.coverage.json`), JSON.stringify(await opened.coverage.stop()));
                 const tree = await evaluateSettled(page, snapshot, { ignore: state.ignore ?? config.ignore ?? null });
@@ -351,7 +357,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                 for (const l of linksFrom(config, name)) {
                     const box = await boxOf(page, l.selector);
                     if (box) links.push({ ...l, box });
-                    else log(`     ${name}: the link to ${l.to} is not on the page (${l.selector})`);
+                    else log(`note ${name}: its link to ${l.to} is not on this page (${l.selector}), so the flow does not go on from here`);
                 }
                 const shot = await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
                 // The page as one editable HTML file, checked against the screenshot: opened again, how much differs.
@@ -371,8 +377,9 @@ export async function captureStates({ config, base, out, only, root = process.cw
                     }
                 }
                 if (storageState) await keepAuth(storageState, context).catch(() => {});
-                results.push({ name, ok: true, errors, fidelity, links, data: hasData });
+                results.push({ name, ok: true, errors, fidelity, links, data: hasData, ...(moved ? { moved } : {}) });
                 const same = fidelity === null ? '' : `  html ${(fidelity * 100).toFixed(2)}% the same as the page`;
+                if (moved) log(`! ${name}: opened ${asked.pathname} but the app went to ${moved}: the capture is of that page, not the state`);
                 log(`ok   ${name}${same}${errors.length ? `  (the page logged: ${errors.join(' | ')})` : ''}`);
             } catch (error) {
                 const message = (error as Error).message.split('\n')[0];
