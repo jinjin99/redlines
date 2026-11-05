@@ -101,6 +101,27 @@ export interface StateConfig {
     links?: Record<string, string>;
 }
 
+/** How to run the app, so redlines starts each version itself (capture_change). */
+export interface AppConfig {
+    /** The app's git checkout, relative to the config. */
+    dir: string;
+    /** Starts the app: a shell command, run in `dir`, given PORT. */
+    start: string;
+    /** Run before `start` for each version (a production build). */
+    build?: string;
+    /** Where the started app answers (default http://localhost:<port>/). */
+    url?: string;
+    /** Default 3000. */
+    port?: number;
+    /** The version before a change: a git ref whose meeting point with the working copy is the base (default the remote's default branch). */
+    base?: string;
+    env?: Record<string, string>;
+    /** The app fetches data on the server: run the data proxy replaying the recording, and start the app with its variables. */
+    dataProxy?: boolean;
+    /** How long to wait for it to answer, in seconds (default 300). */
+    timeout?: number;
+}
+
 export interface Config {
     baseURL?: string;
     viewport?: { width: number; height: number };
@@ -119,6 +140,9 @@ export interface Config {
     now?: string;
     /** false: no standalone HTML per state. */
     html?: boolean;
+    app?: AppConfig;
+    /** Keep which source lines each state ran (<state>.coverage.json), for affected_states; on whenever `app` is set. */
+    coverage?: boolean;
     /** Where the config was read from. */
     file: string;
 }
@@ -148,4 +172,6 @@ export interface Manifest {
     base: string;
     at: string;
     states: ManifestState[];
+    /** What was captured (capture_change): the commit, whether it had uncommitted changes, and a fingerprint of the config and data. */
+    source?: { commit: string; dirty?: boolean; inputs: string };
 }

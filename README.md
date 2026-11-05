@@ -73,6 +73,8 @@ The same tools, by the same names and inputs, on the command line (`redlines <to
 | `find_changes --before <dir> --after <dir> [--json]` | The changes between two captured folders, state by state. `--json` adds each change's boxes on the page. |
 | `create_review --before <dir> --after <dir> [--out <dir>] [--title <text>]` | The review page: `index.html`, the screenshots and `changes.json` (default `.redlines/review`). |
 | `export_design --from <dir> [--out <dir>] [--format dc\|html] [--title <text>]` | The states as editable design files. `dc`: a [Claude Design](https://claude.ai) canvas, one artboard per state. `html`: each state as one standalone HTML file (styles inlined, scripts out), to open and edit anywhere. Both link the states where a click leads, so the pages click through (Play on the canvas). See [Designing with it](#designing-with-it). |
+| `capture_change [--app <checkout>] [--states <names>] [--fresh]` | Runs both versions itself and captures them: the base (where your branch left the main branch, checked out in `.redlines/base/`, sharing your installed dependencies) and your working copy, each built, started, waited for and stopped with the config's `app`. Then lists what changed and which states the code change reaches. The base capture is kept while the base commit, config and data stay the same. See [A change, start to end](#a-change-start-to-end). |
+| `affected_states [--after <dir>] [--before <dir>] [--base <ref>] [--app <checkout>]` | Which states a code change reaches: the lines it changed (git diff against the base) against the source lines each state ran. Also lists changed code no state ran, which needs a state to show it or a question about it. |
 | `find_design_edits --edited <dir> [--exported <dir>] [--json]` | What a designer changed on an exported canvas: the artboards as exported (default `.redlines/design`) against the same files read back after they edited them, as the same list of changes `find_changes` gives. Artboards they added come with an outline. |
 | `build_prototype --base <url> --id <name> [--out <dir>] [--start <state>] [--states <names>] [--skip <regex>] [--skipCheck]` | A clickable prototype of the running app that needs no server: each state's walk recorded, played back by a service worker, in a folder to put on any static host. See [Prototypes](#prototypes). `redlines serve [<dir>]` opens one on localhost. |
 
@@ -178,6 +180,30 @@ The same captures make a design to work on: a requirement drafted in the real co
 
 The baseline for the designer's edits is the export itself (`.redlines/design`), so nothing else is stored: no database, no server. Exporting again makes the new export the baseline.
 
+## A change, start to end
+
+With `app` in the config, redlines runs the app itself, so one call shows what a branch does:
+
+```js
+app: {
+    dir: '../my-app',                 // the app's git checkout (--app points it at a worktree)
+    build: 'npm run build',           // optional, run before start for each version
+    start: 'npm start',               // given PORT
+    port: 3000,
+    base: 'origin/main',              // optional: the default is the remote's default branch
+    dataProxy: true,                  // optional: replay the recording to the app's server too
+},
+```
+
+```bash
+redlines capture_change --app ../my-app-feature
+```
+
+1. **Both versions.** The base is the commit where your branch left `base`; it is checked out once in `.redlines/base/<commit>` with your `node_modules` linked in, and its capture is kept until the base, the config or the data change. Your working copy is captured every time. Nothing else may run on the app's port.
+2. **What changed**, state by state, as `find_changes` lists it.
+3. **Which states the change reaches.** While capturing, redlines keeps which lines of your source each state ran (the browser's coverage, mapped back through the scripts' source maps; a production build needs them, e.g. `vite build --sourcemap`). Set against the lines your diff touched, that names the states the change reaches, with `file:lines`, and the states it doesn't. Shared code a state runs counts: change a button and every state showing it is reached.
+4. **What no state shows.** Changed lines no state ran are listed apart: a new dialog, an error branch, an empty list. Either list a state that shows it, or ask what should happen there. Files no state even loaded are marked (server code, or a page none of the states opens).
+
 ## Prototypes
 
 The canvas shows each state; a prototype is the app itself, to click through. `build_prototype` walks the states at `base` (logged in, with the config's data) and keeps everything the browser is given: the pages, scripts, styles, fonts, the API's answers and the config's mocks. A service worker plays them back, so the app runs again with no server, no backend and no login, in anyone's browser.
@@ -222,6 +248,8 @@ The config is checked when it is read: a key redlines doesn't know is an error n
 | `stepTimeout` | How long a step waits for what it acts on, default 5000 ms. A step that finds nothing fails the state with which step and why. |
 | `locale`, `timezone` | Default `en-US` and `UTC`, so dates read the same on every machine. |
 | `now` | The time pages see as now, e.g. `'2026-11-03T10:00:00Z'`. Pages that work dates out from today ("the last 30 days") then read the same whenever they are captured, so the version before a change, captured yesterday, and the one after it, captured today, don't differ only by the date. |
+| `app` | How to run the app, for `capture_change`: `{ dir, start, build?, port?, url?, base?, env?, dataProxy?, timeout? }`. See [A change, start to end](#a-change-start-to-end). |
+| `coverage` | Keep which source lines each state ran (`<state>.coverage.json`), for `affected_states`. On whenever `app` is set. |
 
 Animations and transitions are turned off and the caret hidden while capturing, so two shots of the same page are the same.
 

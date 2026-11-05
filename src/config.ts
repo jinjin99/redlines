@@ -31,6 +31,20 @@ const stateSchema = z
     })
     .strict();
 
+const appSchema = z
+    .object({
+        dir: z.string(),
+        start: z.string(),
+        build: z.string().optional(),
+        url: z.string().url().optional(),
+        port: z.number().int().min(1024).max(65535).optional(),
+        base: z.string().regex(/^[\w./~^@{}-]+$/, 'a git ref, like origin/main').optional(),
+        env: z.record(z.string()).optional(),
+        dataProxy: z.boolean().optional(),
+        timeout: z.number().int().positive().optional(),
+    })
+    .strict();
+
 export const configSchema = z
     .object({
         baseURL: z.string().url().optional(),
@@ -46,6 +60,8 @@ export const configSchema = z
         timezone: z.string().optional(),
         now: isoDate.optional(),
         html: z.boolean().optional(),
+        app: appSchema.optional(),
+        coverage: z.boolean().optional(),
     })
     .strict();
 
@@ -61,6 +77,7 @@ const known = (at: (string | number)[]): string[] => {
     // An unknown key's neighbours: the keys of the object it is in.
     if (at.length === 0) return Object.keys(configSchema.shape);
     if (at[0] === 'states' && at.length === 2) return Object.keys(stateSchema.shape);
+    if (at[0] === 'app' && at.length === 1) return Object.keys(appSchema.shape);
     return [];
 };
 

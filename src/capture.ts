@@ -10,6 +10,7 @@ import type { Browser, BrowserContext, Page, Request, Route } from 'playwright-c
 import { keepAuth, LOGIN, storedAuth } from './auth.js';
 import { launch } from './browser.js';
 import { configProblems } from './config.js';
+import { type Coverage, watchCoverage } from './coverage.js';
 import { DataWatcher } from './data.js';
 import { handlersFor, loadMsw, type MswSource, mswAnswer } from './msw.js';
 import { loadRecording, Recorder, type Recording, replay } from './recording.js';
@@ -114,6 +115,8 @@ export interface OpenOptions {
     recorder?: Recorder;
     /** Collects the strings in the page's API answers. */
     data?: DataWatcher;
+    /** Collects which source lines the page runs, from the app's own scripts at this origin. */
+    coverage?: string;
     /** Keeps everything the page is given (documents, scripts, styles, answers) in this HAR, written when the context closes (build_prototype). */
     har?: string;
 }
@@ -149,7 +152,7 @@ export async function evaluateSettled<R, A>(page: Page, fn: (arg: A) => R | Prom
 /** A step as the config says it, for an error message. */
 const stepText = (s: Step) => (typeof s === 'function' ? 'a function step' : JSON.stringify(s));
 
-export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder, data, har }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
+export async function openState(browser: Browser, { url, steps = [], mocks = {}, viewport = { width: 1280, height: 800 }, settle = 300, stepTimeout = 5000, locale = 'en-US', timezone = 'UTC', storageState, now, msw, recording, recorder, data, har, coverage }: OpenOptions): Promise<{ context: BrowserContext; page: Page; errors: string[]; coverage?: { stop: () => Promise<Coverage> } }> {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, reducedMotion: 'reduce', locale, timezoneId: timezone, storageState, ...(har ? { recordHar: { path: har, content: 'embed' as const } } : {}) });
     const page = await context.newPage();
     if (now) {
@@ -160,6 +163,21 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
     }
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
+    // A page that is HTML but sent as something else (an app bug: a JSON content type leaking onto the
+    // document) would show as text with no scripts: shown as HTML, and said among the page's errors.
+    await page.route('**/*', async route => {
+        const request = route.request();
+        if (request.resourceType() !== 'document' || !request.isNavigationRequest()) return route.fallback();
+        const response = await route.fetch({ maxRedirects: 0 }).catch(() => null);
+        if (!response) return route.fallback();
+        const type = response.headers()['content-type'] ?? '';
+        const body = await response.body();
+        if (!/html/i.test(type) && /^\s*(<!doctype html|<html)/i.test(body.subarray(0, 200).toString('utf8'))) {
+            errors.push(`the app sent ${new URL(request.url()).pathname} as ${type || 'no type'}, not HTML (shown as HTML)`);
+            return route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/html; charset=utf-8' } });
+        }
+        return route.fulfill({ response, body });
+    });
     const table = Object.entries(mocks).map(([p, answer]) => [matcher(p), answer] as const);
     // The page's data, from the first source that has an answer: config mocks, MSW, a recording; else the network.
     if (table.length || msw || recording) {
@@ -174,6 +192,7 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
     }
     recorder?.watch(page);
     data?.watch(page);
+    const covered = coverage ? await watchCoverage(page, coverage) : undefined;
     try {
         // Shown first; then load and idle as far as they come (a dev server's page may keep a request
         // hanging, so neither is required).
@@ -210,7 +229,7 @@ export async function openState(browser: Browser, { url, steps = [], mocks = {},
         await context.close();
         throw error;
     }
-    return { context, page, errors };
+    return { context, page, errors, coverage: covered };
 }
 
 /** One page as it is now: { tree, screenshot (PNG buffer), errors }, without writing anything. */
@@ -271,7 +290,7 @@ async function boxOf(page: Page, selector: string): Promise<Box | undefined> {
 /** Shoots the config's states (or `only` of them) at `base` into `out`. Returns [{ name, ok, error? }]. */
 export interface CaptureResult { name: string; ok: boolean; error?: string; errors: string[]; fidelity: number | null; links?: Link[]; data?: boolean }
 
-export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void }): Promise<CaptureResult[]> {
+export async function captureStates({ config, base, out, only, root = process.cwd(), log = console.log, source }: { config: Config; base?: string; out: string; only?: string[]; root?: string; log?: (line: string) => void; source?: Manifest['source'] }): Promise<CaptureResult[]> {
     const baseURL = base ?? config.baseURL;
     if (!baseURL) throw new Error('No base URL: pass --base <url> or set baseURL in the config');
     // Logged in to this app before (log_in): every state opens logged in.
@@ -306,6 +325,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
                     data,
                     locale: config.locale,
                     timezone: config.timezone,
+                    coverage: (config.coverage ?? !!config.app) ? new URL(baseURL).origin : undefined,
                 });
             } catch (error) {
                 const message = (error as Error).message.split('\n')[0];
@@ -315,6 +335,8 @@ export async function captureStates({ config, base, out, only, root = process.cw
             }
             const { context, page, errors } = opened;
             try {
+                // Which source lines the state ran (its page as loaded and its steps), before anything else runs on it.
+                if (opened.coverage) fs.writeFileSync(path.join(out, `${name}.coverage.json`), JSON.stringify(await opened.coverage.stop()));
                 const tree = await evaluateSettled(page, snapshot, { ignore: state.ignore ?? config.ignore ?? null });
                 tree.state = { name, title: state.title ?? name, path: state.path ?? '/' };
                 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(tree));
@@ -361,7 +383,7 @@ export async function captureStates({ config, base, out, only, root = process.cw
     } finally {
         await browser.close();
     }
-    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}), ...(r.data ? { data: `${r.name}.data.json` } : {}) })) };
+    const manifest: Manifest = { tool: 'redlines', version: 1, base: baseURL, at: new Date().toISOString(), ...(source ? { source } : {}), states: results.filter(r => r.ok).map(r => ({ name: r.name, title: config.states[r.name].title ?? r.name, tree: `${r.name}.json`, image: `${r.name}.png`, ...(r.fidelity === null ? {} : { html: `${r.name}.html`, fidelity: Number(r.fidelity!.toFixed(4)) }), ...(r.links?.length ? { links: r.links } : {}), ...(r.data ? { data: `${r.name}.data.json` } : {}) })) };
     // Capturing some states adds to what the folder had.
     const file = path.join(out, 'manifest.json');
     if (only?.length && fs.existsSync(file)) {

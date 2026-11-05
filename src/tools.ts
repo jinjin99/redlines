@@ -1,6 +1,7 @@
 // The tools, defined once: their names, what they do, their inputs (zod), and what they run. The MCP
 // server (src/mcp.js) and the command line (bin/redlines.js) are both made from this list, so an agent
 // sees the same names and inputs whichever way it calls them. Every path is inside the project folder.
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -9,10 +10,13 @@ import { logIn, storedAuth } from './auth.js';
 import { workDir } from './package.js';
 import { proxyEnv, proxyStatus, startProxy, stopProxy } from './proxy.js';
 import { captureStates, loadConfig, recordData, viewPage } from './capture.js';
+import type { Config, Manifest } from './types.js';
 import { formatChanges } from './diff.js';
 import { findDesignEdits } from './edits.js';
 import { exportDesign } from './export.js';
 import { outline } from './outline.js';
+import { affectedStates, baseCommit, formatAffected } from './affected.js';
+import { baseCheckout, fingerprint, freePort, headOf, startApp } from './app.js';
 import { buildPrototype, checkPrototype } from './prototype.js';
 import { findChanges, writeReport } from './report.js';
 
@@ -39,6 +43,7 @@ Use it whenever you change UI code:
 2. Show the change to people (designers, PMs, reviewers):
    - list_states tells you which states the project lists in redlines.config.mjs, or how to write one. Make sure every screen and state your change touches is listed (dialogs via steps, data states via mocks); edit the config file yourself.
    - Both versions must show the same data. If the project has MSW handlers, set msw in the config; if the app needs a real backend, call record_data once against it (logged in) and set recording in the config to the file it writes. Otherwise write mocks for the endpoints the states use.
+   - If the config has app (how to build and start it), call capture_change instead of the next three steps: it runs both versions itself, captures them, lists the changes and which states your code change reaches. Changed code no state ran needs a state that shows it (add one to the config) or a question to the user about what should happen there.
    - You need the app running twice: before the change (usually the main branch: a second checkout, e.g. git worktree add, with its own dev server on another port) and after it (your working copy). If you don't know how to run the app, ask the user for the two URLs.
    - capture_states with the before URL into one folder and with the after URL into another (same config), then find_changes between them. Check the list matches what you meant to change: anything you did not intend is worth telling the user about.
    - create_review writes a review page (before and after side by side, each change boxed and numbered). Give the user its path.
@@ -77,6 +82,71 @@ const CONFIG_EXAMPLE = `export default {
         empty: { path: '/orders', title: 'No orders', mocks: { 'GET /api/orders': [] } },
     },
 };`;
+
+
+/** The change as text: find_changes' list. */
+function changesText(before: string, after: string): string {
+    const states = findChanges(before, after);
+    const parts = states.filter(s => s.status !== 'same').map(s => `### ${s.title} (${s.name})\n${s.status === 'changed' ? formatChanges(s.changes) : s.status === 'added' ? 'a new state (not captured before)' : 'captured before, not after'}`);
+    const same = states.filter(s => s.status === 'same').map(s => s.name);
+    return `${parts.join('\n\n') || 'no changes'}${same.length ? `\n\nno changes: ${same.join(', ')}` : ''}`;
+}
+
+/** The app's checkout: `override` (from the project), else config.app.dir (relative to the config). */
+function appDir(config: Config, root?: string, override?: string): string {
+    if (!config.app) throw new Error('The config has no app: say how to start it (app: { dir, start, port }) so redlines can run each version itself');
+    const dir = override ? path.resolve(root ?? process.cwd(), override) : path.resolve(path.dirname(config.file), config.app.dir);
+    if (!fs.existsSync(path.join(dir, '.git'))) throw new Error(`app.dir is not a git checkout: ${dir}`);
+    return dir;
+}
+
+/**
+ * Captures the version before the change (the base commit, checked out beside the project) and the
+ * one after it (the working copy), starting each with config.app. A before capture of the same base,
+ * config and data is kept.
+ */
+async function captureChange({ config, root, dir, only, fresh, log }: { config: Config; root: string; dir: string; only?: string[]; fresh?: boolean; log: (line: string) => void }) {
+    const app = config.app!;
+    const base = baseCommit(dir, app.base);
+    const recording = config.recording ? path.resolve(path.dirname(config.file), config.recording) : undefined;
+    const inputs = fingerprint([config.file, ...(recording ? [recording] : [])]);
+    const before = path.join(workDir(root), 'before'), after = path.join(root, '.redlines', 'after');
+    let env: Record<string, string> = {};
+    let proxied = false;
+    try {
+        if (app.dataProxy) {
+            if (!recording) throw new Error('app.dataProxy replays the recording: set recording in the config (record it with data_proxy and record_data)');
+            if (proxyStatus(root)) throw new Error('A data proxy is already running for this project: stop it first (data_proxy --action stop)');
+            env = proxyEnv(await startProxy({ root, mode: 'replay', file: recording, port: await freePort() }));
+            proxied = true;
+        }
+        const version = async (side: 'before' | 'after', cwd: string, source: NonNullable<Manifest['source']>) => {
+            log(`${side}: starting ${app.start} in ${cwd}`);
+            const running = await startApp(app, { cwd, env, log: path.join(root, '.redlines', `app-${side}.log`) });
+            try {
+                // A dev server builds each page the first time it is asked for: ask once, unhurried, before capturing.
+                for (const p of new Set(Object.entries(config.states).filter(([n]) => !only?.length || only.includes(n)).map(([, s]) => s.path ?? '/'))) {
+                    await fetch(new URL(p, running.url), { signal: AbortSignal.timeout((app.timeout ?? 300) * 1000) }).then(r => r.body?.cancel()).catch(() => {});
+                }
+                const results = await captureStates({ config, base: running.url, out: side === 'before' ? before : after, only, root, log, source });
+                return results;
+            } finally {
+                await running.stop();
+            }
+        };
+        const kept = fs.existsSync(path.join(before, 'manifest.json')) ? (JSON.parse(fs.readFileSync(path.join(before, 'manifest.json'), 'utf8')) as Manifest) : undefined;
+        const wanted = only?.length ? only : Object.keys(config.states);
+        const current = !fresh && kept?.source?.commit === base && kept.source.inputs === inputs && wanted.every(n => kept.states.some(s => s.name === n));
+        const results: { side: string; name: string; ok: boolean; error?: string; errors?: string[] }[] = [];
+        if (current) log(`before: kept (base ${base.slice(0, 10)}, same config and data)`);
+        else for (const r of await version('before', baseCheckout(root, dir, base), { commit: base, inputs })) results.push({ side: 'before', ...r });
+        const head = headOf(dir);
+        for (const r of await version('after', dir, { commit: head.commit, dirty: head.dirty, inputs })) results.push({ side: 'after', ...r });
+        return { base, dir, before, after, results, kept: current };
+    } finally {
+        if (proxied) await stopProxy(root);
+    }
+}
 
 /**
  * Each tool: { name, title, description, input (zod shape), annotations, run(args, { root }) }. `run`
@@ -153,6 +223,52 @@ export const TOOLS: Tool[] = [
             const results = await captureStates({ config, base, out: dir, only: states, root, log: log ?? (() => {}) });
             const lines = results.map(r => (r.ok ? `ok   ${r.name}${r.fidelity != null ? ` (html ${(r.fidelity * 100).toFixed(1)}% like the page)` : ''}${r.errors.length ? `; page errors: ${r.errors.join(' | ')}` : ''}` : `FAIL ${r.name}: ${r.error}`));
             return { text: `${path.relative(root, dir)}:\n${lines.join('\n')}`, isError: results.some(r => !r.ok) };
+        },
+    },
+    {
+        name: 'capture_change',
+        title: 'Capture what a change does',
+        description: 'Run both versions of the app and capture every state in each: the version before the change (where the working copy left the base branch, checked out beside the project, sharing its installed dependencies) and the working copy, each started, waited for and stopped by redlines with config.app (dir, start, build, port, dataProxy). The before capture is kept while the base, config and data stay the same. Then lists what changed (find_changes) and which states the code change reaches (affected_states). Needs app in the config, and nothing else running on its port.',
+        input: {
+            states: z.array(z.string()).optional().describe('Only these states (default: all).'),
+            fresh: z.boolean().optional().describe('Capture the version before again even if the kept one is current.'),
+            app: z.string().optional().describe('The app checkout to capture, if not config.app.dir (a worktree of it, where the change is)'),
+            config: z.string().optional().describe('A config file in the project, if not the default name.'),
+        },
+        annotations: { openWorldHint: true },
+        async run({ states, fresh, app, config: file }, { root, log }) {
+            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
+            const done = await captureChange({ config, root, dir: appDir(config, root, app), only: states, fresh, log: log ?? (() => {}) });
+            const failed = done.results.filter(r => !r.ok);
+            // A page whose requests came back 401 shows a login or an error, not the state.
+            const denied = done.results.filter(r => r.ok && r.errors?.some(e => /\b401\b/.test(e))).map(r => `${r.side} ${r.name}`);
+            const parts = [
+                ...(denied.length ? [`! The app was refused (401) on ${denied.join(', ')}: the login has probably expired, so those pages may show an error or a login instead of the state. Log in again (log_in) and run this again with fresh.`, ''] : []),
+                `before: ${done.kept ? 'kept' : 'captured'} (${done.base.slice(0, 10)}) → ${path.relative(root, done.before)}; after: the working copy → ${path.relative(root, done.after)}`,
+                ...failed.map(r => `FAIL ${r.side} ${r.name}: ${r.error}`),
+                '', '## What changed', changesText(done.before, done.after),
+                '', '## Which states the code change reaches', formatAffected(affectedStates({ dir: done.dir, base: done.base, after: done.after, before: done.before, states })),
+            ];
+            return { text: parts.join('\n'), isError: failed.length > 0 || denied.length > 0 };
+        },
+    },
+    {
+        name: 'affected_states',
+        title: 'Which states a code change reaches',
+        description: 'Set the lines the change touched (git diff of the app\'s checkout against the base) against the source lines each captured state ran (<state>.coverage.json, kept by capture_states when the config has app or coverage: true). Lists the states the change reaches (with file:lines), the states it does not, and changed code no state ran: new code that needs a state to show it (a dialog, an error, an empty list) or a question to ask about it.',
+        input: {
+            after: z.string().optional().describe('The capture of the changed version (default .redlines/after)'),
+            before: z.string().optional().describe('The capture before it, for removed lines (default .redlines/before, if there)'),
+            base: z.string().optional().describe('The git ref to compare with (default: where the working copy left app.base or the remote default branch)'),
+            app: z.string().optional().describe('The app checkout, if not config.app.dir'),
+            config: z.string().optional().describe('A config file in the project, if not the default name.'),
+        },
+        annotations: { readOnlyHint: true },
+        async run({ after, before, base, app, config: file }, { root }) {
+            const config = await loadConfig(file ? inProject(root, file) : undefined, root);
+            const dir = config.app ? appDir(config, root, app) : root;
+            const a = inProject(root, after, '.redlines/after'), b = inProject(root, before, '.redlines/before');
+            return { text: formatAffected(affectedStates({ dir, base: baseCommit(dir, base ?? config.app?.base), after: a, before: fs.existsSync(b) ? b : undefined })) };
         },
     },
     {
